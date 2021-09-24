@@ -119,8 +119,10 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   iphdr *ip = (iphdr *)in;
   if (ret > sizeof(iphdr))
   {
-    in_addr addr{ip->saddr};
-    char *src_ = inet_ntoa(addr);
+    // in_addr addr{ip->saddr};
+    // char *src_ = inet_ntoa(addr);
+    // src = src_;
+    char *src_ = (char *)(in + sizeof(iphdr) + sizeof(icmphdr));
     src = src_;
 
     if (ret > sizeof(iphdr) + sizeof(icmphdr))

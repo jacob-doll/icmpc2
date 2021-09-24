@@ -11,6 +11,8 @@
 #include <netinet/ip.h>
 #include <arpa/inet.h>
 
+static char hostname[256];
+
 static uint16_t checksum(void *vdata, size_t size)
 {
     uint8_t *data = (uint8_t *)vdata;
@@ -77,12 +79,15 @@ long send_ping(int sockfd, const std::string& dst, uint8_t *buf, size_t size)
     icmp->code = 0;
     icmp->checksum = 0;
 
+    size_t hostname_len = strlen(hostname) + 1;
+    memcpy(&out[sizeof(icmphdr)], hostname, hostname_len);
+
     if (buf && size > 0)
     {
-        memcpy(&out[sizeof(icmphdr)], buf, size);
+        memcpy(&out[sizeof(icmphdr) + hostname_len], buf, size);
     }
 
-    icmp->checksum = htons(checksum(out, sizeof(icmp) + size));
+    icmp->checksum = htons(checksum(out, sizeof(icmphdr) + hostname_len + size));
 
     sockaddr_in addr_;
     addr_.sin_family = AF_INET;
@@ -90,7 +95,7 @@ long send_ping(int sockfd, const std::string& dst, uint8_t *buf, size_t size)
     addr_.sin_addr.s_addr = inet_addr(dst.c_str());
 
     long ret;
-    if ((ret = sendto(sockfd, out, sizeof(icmp) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
+    if ((ret = sendto(sockfd, out, sizeof(icmphdr) + hostname_len + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
     {
         perror("sendto");
     }
@@ -138,6 +143,8 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "-h") == 0) {
         usage(0);
     }
+
+    gethostname(hostname, sizeof(hostname));
 
     // Master IP address that box will continuously ping.
     char *dest_ip = argv[1];
