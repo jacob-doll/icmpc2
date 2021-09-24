@@ -1,6 +1,10 @@
 {
     "files.associations": {
-        "iostream": "cpp"
+        "SConstruct": "python",
+        "SConscript": "python",
+        "*.inc": "gas",
+        "iostream": "cpp",
+        "system_error": "cpp"
     },
     "editor.formatOnType": true
 }

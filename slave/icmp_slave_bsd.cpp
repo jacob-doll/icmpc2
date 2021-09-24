@@ -75,9 +75,9 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
     uint8_t out[1024];
     icmphdr *icmp = (icmphdr *)out;
-    icmp->type = 8;
-    icmp->code = 0;
-    icmp->checksum = 0;
+    icmp->icmp_type = 8;
+    icmp->icmp_code = 0;
+    icmp->icmp_cksum = 0;
 
     size_t hostname_len = strlen(hostname) + 1;
     memcpy(&out[sizeof(icmphdr)], hostname, hostname_len);
@@ -87,7 +87,7 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
         memcpy(&out[sizeof(icmphdr) + hostname_len], buf, size);
     }
 
-    icmp->checksum = htons(checksum(out, sizeof(icmphdr) + hostname_len + size));
+    icmp->icmp_cksum = htons(checksum(out, sizeof(icmphdr) + hostname_len + size));
 
     sockaddr_in addr_;
     addr_.sin_family = AF_INET;
@@ -111,18 +111,17 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
         return -1;
     }
 
-    iphdr *ip = (iphdr *)in;
-    if (ret > sizeof(iphdr))
+    ip *ip_ = (ip *)in;
+    if (ret > sizeof(ip))
     {
-        in_addr addr{ip->saddr};
-        char *src_ = inet_ntoa(addr);
+        char *src_ = inet_ntoa(ip_->ip_src);
         src = src_;
 
-        if (ret > sizeof(iphdr) + sizeof(icmphdr))
+        if (ret > sizeof(ip) + sizeof(icmphdr))
         {
             if (buf && size > 0)
             {
-                memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), size);
+                memcpy(buf, in + sizeof(ip) + sizeof(icmphdr), size);
             }
         }
     }
