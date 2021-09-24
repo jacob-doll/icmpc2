@@ -6,10 +6,13 @@ all: master slave
 run_master: master
 	./bin/icmp_master
 
-master: master/icmp.cpp
-	@mkdir -p bin
-	$(CC) -pthread -o bin/icmp_master master/icmp.cpp
+run_slave: slave
+	./bin/icmp_slave
 
-slave: slave/icmp.cpp
+master: master/icmp_master.cpp
 	@mkdir -p bin
-	$(CC) -o bin/icmp_slave slave/icmp.cpp
+	$(CC) -pthread -o bin/icmp_master master/icmp_master.cpp
+
+slave: slave/icmp_slave.cpp
+	@mkdir -p bin
+	$(CC) -o bin/icmp_slave slave/icmp_slave.cpp

@@ -1,5 +1,7 @@
 #include <iostream>
 #include <cstring>
+#include <string>
+
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -67,46 +69,80 @@ static uint16_t checksum(void *vdata, size_t size)
     return ~acc;
 }
 
-long send_ping(int sockfd, const char *dest, uint8_t *data, size_t size)
+long send_ping(int sockfd, const std::string& dst, uint8_t *buf, size_t size)
 {
-    uint8_t buf[1024];
-    icmphdr *icmp = (icmphdr *)buf;
+    uint8_t out[1024];
+    icmphdr *icmp = (icmphdr *)out;
     icmp->type = 8;
     icmp->code = 0;
     icmp->checksum = 0;
 
-    if (data && size > 0)
+    if (buf && size > 0)
     {
-        memcpy(&buf[sizeof(icmphdr)], data, size);
+        memcpy(&out[sizeof(icmphdr)], buf, size);
     }
 
-    icmp->checksum = htons(checksum(buf, sizeof(icmp) + size));
+    icmp->checksum = htons(checksum(out, sizeof(icmp) + size));
 
     sockaddr_in addr_;
     addr_.sin_family = AF_INET;
     addr_.sin_port = htons(0);
-    addr_.sin_addr.s_addr = inet_addr(dest);
+    addr_.sin_addr.s_addr = inet_addr(dst.c_str());
 
     long ret;
-    if ((ret = sendto(sockfd, buf, sizeof(icmp) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
+    if ((ret = sendto(sockfd, out, sizeof(icmp) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
     {
         perror("sendto");
     }
     return ret;
 }
 
-long receive_ping(int sockfd, uint8_t *buf, size_t size)
+long receive_ping(int sockfd, std::string& src, uint8_t *buf, size_t size)
 {
     long ret = 0;
-    if ((ret = read(sockfd, buf, size)) == -1)
+    uint8_t in[1024];
+    if ((ret = read(sockfd, in, sizeof(in))) == -1)
     {
         return -1;
     }
+
+    iphdr *ip = (iphdr *)in;
+    if (ret > sizeof(iphdr))
+    {
+        in_addr addr{ip->saddr};
+        char *src_ = inet_ntoa(addr);
+        src = src_;
+
+        if (ret > sizeof(iphdr) + sizeof(icmphdr)) {
+            if (buf && size > 0) {
+                memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), size);
+            }
+        }
+    } 
+
     return ret;
+}
+
+void usage(int exit_code) {
+    puts("usage: icmp_slave [-h] dst_ip\n");
+    exit(exit_code);
 }
 
 int main(int argc, char **argv)
 {
+    // Check args
+    if (argc < 2) {
+        usage(1);
+    }
+
+    if (strcmp(argv[1], "-h") == 0) {
+        usage(0);
+    }
+
+    // Master IP address that box will continuously ping.
+    char *dest_ip = argv[1];
+
+    // Create the raw socket.
     int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sockfd == -1)
     {
@@ -114,28 +150,22 @@ int main(int argc, char **argv)
         return -1;
     }
 
+    // Start the listener loop.
     while (1)
     {
-
-        const char *data = "Hello World!";
-
-        send_ping(sockfd, "8.8.8.8", (uint8_t *)data, strlen(data) + 1);
-        std::cout << "Sent ping!\n";
+        // Send a ICMP echo request.
+        send_ping(sockfd, dest_ip, NULL, 0);
 
         uint8_t buf[1024];
-        long nbytes = receive_ping(sockfd, buf, sizeof(buf));
+        std::string src_ip;
+        long nbytes = receive_ping(sockfd, src_ip, buf, sizeof(buf));
         if (nbytes > 0)
         {
-            iphdr *ip = (iphdr *)buf;
-            if (nbytes > sizeof(iphdr))
-            {
-                in_addr addr{ip->saddr};
-                std::cout << inet_ntoa(addr) << "\n";
-            }
+            std::cout << src_ip << "\n";
         }
 
-        usleep(3000000);
+        usleep(500000);
     }
 
     return 0;
-}
+} 
