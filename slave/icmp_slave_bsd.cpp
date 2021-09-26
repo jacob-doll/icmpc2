@@ -80,14 +80,14 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
     icmp->icmp_cksum = 0;
 
     size_t hostname_len = strlen(hostname) + 1;
-    memcpy(&out[sizeof(icmphdr)], hostname, hostname_len);
+    memcpy(&out[sizeof(icmphdr) + 4], hostname, hostname_len);
 
     if (buf && size > 0)
     {
-        memcpy(&out[sizeof(icmphdr) + hostname_len], buf, size);
+        memcpy(&out[sizeof(icmphdr) + 4 + hostname_len], buf, size);
     }
 
-    icmp->icmp_cksum = htons(checksum(out, sizeof(icmphdr) + hostname_len + size));
+    icmp->icmp_cksum = htons(checksum(out, sizeof(icmphdr) + 4 + hostname_len + size));
 
     sockaddr_in addr_;
     addr_.sin_family = AF_INET;
@@ -95,7 +95,7 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
     addr_.sin_addr.s_addr = inet_addr(dst.c_str());
 
     long ret;
-    if ((ret = sendto(sockfd, out, sizeof(icmphdr) + hostname_len + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
+    if ((ret = sendto(sockfd, out, sizeof(icmphdr) + 4 + hostname_len + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
     {
         perror("sendto");
     }
@@ -175,7 +175,7 @@ int main(int argc, char **argv)
             std::cout << src_ip << "\n";
         }
 
-        usleep(500000);
+        usleep(1000000);
     }
 
     return 0;
