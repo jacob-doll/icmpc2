@@ -1,4 +1,4 @@
-Gameplan
+# Gameplan
 
 change hostname and disable monitoring on pfsense boxes
 
@@ -10,4 +10,4 @@ make sure to change ip in ping.sh
 
 - ping all boxes to get uptime
 - clear currently connected list
-- export currently connected list 
+- export currently connected list
