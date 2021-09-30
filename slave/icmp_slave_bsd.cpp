@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
@@ -184,16 +185,16 @@ void parse_command(int sockfd, const std::string &dst, uint8_t *buf, size_t size
 
 void usage(int exit_code)
 {
-    puts("usage: icmp_slave [-h] dst_ip\n");
+    puts("usage: icmp_slave [-h] interface dst_ip\n");
     exit(exit_code);
 }
 
 int main(int argc, char **argv)
 {
     // Check args
-    if (argc < 2)
+    if (argc < 3)
     {
-        usage(1);
+        usage(-1);
     }
 
     if (strcmp(argv[1], "-h") == 0)
@@ -204,7 +205,8 @@ int main(int argc, char **argv)
     gethostname(hostname, sizeof(hostname));
 
     // Master IP address that box will continuously ping.
-    char *dest_ip = argv[1];
+    char *opt = argv[1];
+    char *dest_ip = argv[2];
 
     // Create the raw socket.
     int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -213,6 +215,14 @@ int main(int argc, char **argv)
         perror("socket");
         return -1;
     }
+
+    const size_t len = strnlen(opt, IFNAMSIZ);
+    if (len == IFNAMSIZ) {
+        std::fputs("Too long iface name", stderr);
+        exit(-1);
+    }
+
+    setsockopt(sockfd, SOL_SOCKET, IP_RECVIF, opt, len);
 
     // Start the listener loop.
     while (1)

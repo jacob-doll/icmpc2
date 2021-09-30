@@ -1,2 +1,2 @@
 #!/bin/sh
-exec /usr/bin/icmp 192.168.73.129 &
+exec /usr/bin/icmp vmnet0 192.168.73.129 &

