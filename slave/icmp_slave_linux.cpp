@@ -79,16 +79,16 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
     uint8_t out[1024];
     icmphdr *icmp = (icmphdr *)out;
-    icmp->icmp_type = 8;
-    icmp->icmp_code = 0;
-    icmp->icmp_cksum = 0;
+    icmp->type = 8;
+    icmp->code = 0;
+    icmp->checksum = 0;
 
     if (buf && size > 0)
     {
-        memcpy(&out[sizeof(icmphdr) + 4], buf, size);
+        memcpy(&out[sizeof(icmphdr)], buf, size);
     }
 
-    icmp->icmp_cksum = htons(checksum(out, sizeof(icmphdr) + 4 + size));
+    icmp->checksum = htons(checksum(out, sizeof(icmphdr) + size));
 
     sockaddr_in addr_;
     addr_.sin_family = AF_INET;
@@ -96,7 +96,7 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
     addr_.sin_addr.s_addr = inet_addr(dst.c_str());
 
     long ret;
-    if ((ret = sendto(sockfd, out, sizeof(icmphdr) + 4 + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
+    if ((ret = sendto(sockfd, out, sizeof(icmphdr) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
     {
         perror("sendto");
     }
@@ -112,22 +112,23 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
         return -1;
     }
 
-    ip *ip_ = (ip *)in;
-    if (ret > sizeof(ip))
+    iphdr *ip = (iphdr *)in;
+    if (ret > sizeof(iphdr))
     {
-        char *src_ = inet_ntoa(ip_->ip_src);
+        in_addr addr{ip->saddr};
+        char *src_ = inet_ntoa(addr);
         src = src_;
 
-        if (ret > sizeof(ip) + sizeof(icmphdr))
+        if (ret > sizeof(iphdr) + sizeof(icmphdr))
         {
             if (buf && size > 0)
             {
-                memcpy(buf, in + sizeof(ip) + sizeof(icmphdr) + 4, ret - sizeof(ip) - sizeof(icmphdr) - 4);
+                memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), ret - sizeof(iphdr) - sizeof(icmphdr));
             }
         }
     }
 
-    return ret - sizeof(ip) - sizeof(icmphdr) - 4;
+    return ret - sizeof(iphdr) - sizeof(icmphdr);
 }
 
 std::vector<std::string> split_input(std::string &input)
@@ -279,7 +280,7 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-    setsockopt(sockfd, SOL_SOCKET, IP_RECVIF, opt, len);
+    setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, opt, len);
 
     // Start the listener loop.
     while (1)

