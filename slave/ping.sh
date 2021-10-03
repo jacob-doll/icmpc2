@@ -1,2 +1,2 @@
 #!/bin/sh
-exec /usr/bin/icmp vtnet0 172.16.128.38 &
+/usr/sbin/daemon /usr/bin/pingd vtnet0 172.16.0.80

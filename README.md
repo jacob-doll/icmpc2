@@ -14,3 +14,4 @@ make sure to change ip in ping.sh
 - check for beacon uptime (add ttl for each host)
 - have each beacon constantly ping (thread)
 - each command will have its own salt
+- groups
