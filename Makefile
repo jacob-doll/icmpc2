@@ -1,28 +1,25 @@
-CC=g++
+CC=clang++
 CFLAGS=-Wall -Werror -pedantic
 
-all: master slave_bsd slave_linux
+all: server client_bsd client_linux
 
-run_master: master
-	./bin/icmp_master
+clean:
+	rm -rf bin/
 
-run_slave: slave
-	./bin/icmp_slave
-
-bin/icmp_master: master/icmp_master.cpp
+bin/icmp_server: server/icmp_server.cpp
 	@mkdir -p bin
-	$(CC) -pthread -o bin/icmp_master master/icmp_master.cpp
+	$(CC) -pthread -o bin/icmp_server server/icmp_server.cpp
 
-master: bin/icmp_master
+server: bin/icmp_server
 
-bin/icmp_slave_bsd: slave/icmp_slave_bsd.cpp
+bin/icmp_client_bsd: client/icmp_client_bsd.cpp
 	@mkdir -p bin
-	clang++ -target x86_64-unknown-freebsd12.2 --sysroot=/opt/cross-freebsd-12/ -o bin/icmp_slave_bsd slave/icmp_slave_bsd.cpp
+	$(CC) -target x86_64-unknown-freebsd12.2 --sysroot=/opt/cross-freebsd-12/ -o bin/icmp_client_bsd client/icmp_client_bsd.cpp
 
-slave_bsd: bin/icmp_slave_bsd
+client_bsd: bin/icmp_client_bsd
 
-bin/icmp_slave_linux: slave/icmp_slave_linux.cpp
+bin/icmp_client_linux: client/icmp_client_linux.cpp
 	@mkdir -p bin
-	$(CC) -o bin/icmp_slave_linux slave/icmp_slave_linux.cpp
+	$(CC) -o bin/icmp_client_linux client/icmp_client_linux.cpp
 
-slave_linux: bin/icmp_slave_linux
+client_linux: bin/icmp_client_linux

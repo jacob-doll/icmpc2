@@ -80,5 +80,6 @@
         "memory_resource": "cpp"
     },
     "editor.formatOnType": true,
-    "C_Cpp.errorSquiggles": "Disabled"
+    "C_Cpp.errorSquiggles": "Disabled",
+    "editor.formatOnSave": true
 }

