@@ -49,3 +49,5 @@ To run the client on the host machine use this command:
 - [ ] libpcap
 - [ ] have commands use int types instead of strings
 - [ ] xor encoding of packets
+- [ ] set sub-command
+- [ ] group command and sub-commands

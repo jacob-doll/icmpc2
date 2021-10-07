@@ -33,13 +33,13 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
-/** Currently connected hosts */
-static std::map<std::string, std::string> active_connections;
 /** Expected host machines */
 static std::map<std::string, std::string> hosts;
+/** Currently connected hosts */
+static std::map<std::string, std::string> active_connections;
 static std::mutex active_connections_mutex;
-static bool listening = false;
 
+/** Currently selected host */
 static std::string cur_host;
 
 /**
