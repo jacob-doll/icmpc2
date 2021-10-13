@@ -1,0 +1,5 @@
+- hosts: local
+  roles:
+    - linux_deploy_pingd
+  vars:
+    authorized_user: whiteteam

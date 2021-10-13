@@ -1,0 +1,14 @@
+---
+# Password Info
+whiteteam_user: whiteteam
+whiteteam_password: d0nt_Fall_in_a_w3ll
+
+ansible_password: "{{ whiteteam_password }}"
+ansible_user: "{{ whiteteam_user }}"
+
+# Domain Controller & Domain Info
+domain: "{{ inventory_hostname | replace(inventory_hostname_short, '') | replace('.', '', 1) }}"
+#fqdn: "{{ inventory_hostname }}"
+dc_ip: "10.{{ team_number }}.1.10"
+
+master_team_password: DefendTheW4ll$!
