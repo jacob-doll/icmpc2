@@ -1,11 +1,10 @@
 [Unit]
 Description=Ping Service
-After=network.target
 
 [Service]
-Type=simple
-Restart=always
 ExecStart=/usr/local/bin/pingd eth0 172.16.0.80
+WorkingDirectory=/bin/
+Restart=always
 
 [Install]
 WantedBy=multi-user.target

