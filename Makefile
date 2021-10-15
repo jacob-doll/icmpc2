@@ -8,7 +8,7 @@ clean:
 
 bin/icmp_server: server/icmp_server.cpp
 	@mkdir -p bin
-	$(CC) -pthread -o bin/icmp_server server/icmp_server.cpp
+	$(CC) -pthread -o bin/icmp_server server/icmp_server.cpp -lreadline
 
 server: bin/icmp_server
 
