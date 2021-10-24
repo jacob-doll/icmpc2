@@ -19,12 +19,12 @@ int main(int argc, char **argv)
     }
   }
 
-
   while (1) {
     int fd = open("/tmp/pingd", O_RDONLY);
     char buf[1024];
-    int nbytes = read(fd, buf, sizeof(buf));
-    std::cout << "Read: " << nbytes << " bytes\n";
+    size_t nbytes = read(fd, buf, sizeof(buf));
+    std::string cmd{ buf, nbytes };
+    std::cout << "Read: " << cmd << "\n";
     close(fd);
   }
 
