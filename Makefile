@@ -1,5 +1,4 @@
 CC=clang++
-CFLAGS=-Wall -Werror -pedantic
 
 all: server client_bsd client_linux pingd_server
 
@@ -14,7 +13,7 @@ server: bin/icmp_server
 
 bin/pingd_cli: server/pingd_cli.cpp
 	@mkdir -p bin
-	$(CC) -pthread -o bin/pingd_cli server/pingd_cli.cpp -lreadline
+	$(CC) -pthread -std=c++17 -o bin/pingd_cli server/pingd_cli.cpp -lreadline
 
 bin/pingd_server: server/pingd_server.cpp
 	@mkdir -p bin

