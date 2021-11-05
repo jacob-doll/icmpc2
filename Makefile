@@ -17,7 +17,7 @@ bin/pingd_cli: server/pingd_cli.cpp
 
 bin/pingd_server: server/pingd_server.cpp
 	@mkdir -p bin
-	$(CC) -pthread -o bin/pingd_server server/pingd_server.cpp 
+	$(CC) -pthread -std=c++17 -o bin/pingd_server server/pingd_server.cpp 
 
 pingd_server: bin/pingd_server bin/pingd_cli
 
