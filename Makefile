@@ -1,6 +1,6 @@
 CC=clang++
 
-all: server client_bsd client_linux pingd_server
+all: pingd_server pingd_client_linux
 
 clean:
 	rm -rf bin/
@@ -32,3 +32,9 @@ bin/icmp_client_linux: client/icmp_client_linux.cpp
 	$(CC) -pthread -o bin/icmp_client_linux client/icmp_client_linux.cpp
 
 client_linux: bin/icmp_client_linux
+
+bin/pingd_client_linux: client/pingd_client_linux.cpp
+	@mkdir -p bin
+	$(CC) -pthread -o bin/pingd_client_linux client/pingd_client_linux.cpp
+
+pingd_client_linux: bin/pingd_client_linux

