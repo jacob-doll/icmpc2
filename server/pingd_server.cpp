@@ -3,6 +3,7 @@
 #include <cstring>
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include <map>
 #include <vector>
 #include <thread>
@@ -29,12 +30,15 @@ struct buffer
 struct connection
 {
   connection(const std::string &ip)
-    : ip{ ip }
-  {}
+    : ip{ ip },
+      flush{ 0x00 }
+  {
+  }
   std::string ip;
   std::string hostname;
   buffer out_buf;
   buffer in_buf;
+  uint8_t flush;
 };
 
 using connections_t = std::map<uint32_t, connection>;
@@ -88,7 +92,6 @@ void listen_task()
     std::exit(-1);
   }
 
-  uint8_t flush = 0x00;
   while (running) {
     std::memset(in, 0, sizeof(in));
 
@@ -131,6 +134,9 @@ void listen_task()
         if (in[index] == 0x00 && nbytes != 1) {
           in_buf.data.insert(in_buf.data.end(), &in[index + 1], &in[index + nbytes]);
         } else if (in[index] == 0x01) {
+          if (nbytes != 1) {
+            in_buf.data.insert(in_buf.data.end(), &in[index + 1], &in[index + nbytes]);
+          }
           in_buf.ready = true;
         } else if (in[index] == 0x02) {
           connection.hostname = std::string{ (char *)&in[index + 1], nbytes - 1 };
@@ -140,11 +146,11 @@ void listen_task()
       std::memcpy(&in[sizeof(iphdr) + packet_size], &id, sizeof(id));
       packet_size += sizeof(id);
 
-      std::memcpy(&in[sizeof(iphdr) + packet_size], &flush, sizeof(flush));
-      packet_size += sizeof(flush);
+      std::memcpy(&in[sizeof(iphdr) + packet_size], &connection.flush, sizeof(connection.flush));
+      packet_size += sizeof(connection.flush);
 
-      if (flush == 0x01) {
-        flush = 0x00;
+      if (connection.flush == 0x01) {
+        connection.flush = 0x00;
       }
 
       if (out_buf.ready && out_buf.pos < out_buf.data.size()) {
@@ -158,7 +164,7 @@ void listen_task()
           out_buf.data.clear();
           out_buf.pos = 0;
           out_buf.ready = false;
-          flush = 0x01;
+          connection.flush = 0x01;
         }
       }
     }
@@ -205,11 +211,18 @@ void send_command(const std::string &idstr, const std::string &command)
 
   while (!connection.in_buf.ready) {}
 
+  std::cout << "Command executed for id=" << id << "\n";
+
   {
     std::lock_guard<std::mutex> guard(active_connections_mutex);
-    std::cout << "Received n bytes: " << connection.in_buf.data.size() << "\n";
-    std::string data{ (char *)connection.in_buf.data.data(), connection.in_buf.data.size() };
-    std::cout << data << "\n";
+
+    std::string filename = "/tmp/pingd/";
+    filename.append(idstr);
+
+    if (connection.in_buf.data.size() > 0) {
+      std::ofstream outfile(filename, std::ios::out | std::ios::binary | std::ios::app);
+      outfile.write((char *)connection.in_buf.data.data(), connection.in_buf.data.size());
+    }
 
     connection.in_buf.ready = false;
     connection.in_buf.data.clear();
@@ -243,19 +256,27 @@ int main(int argc, char **argv)
 
   // make pipes
   umask(0);
-  if (mkfifo("/tmp/pingd_in", S_IFIFO | 0666) == -1) {
+  if (mkdir("/tmp/pingd", 0777) == -1) {
+    if (errno != EEXIST) {
+      perror("mkdir");
+      exit(-1);
+    }
+  }
+
+  if (mkfifo("/tmp/pingd/in", S_IFIFO | 0666) == -1) {
     if (errno != EEXIST) {
       perror("mkfifo");
       exit(-1);
     }
   }
 
-  if (mkfifo("/tmp/pingd_out", S_IFIFO | 0666) == -1) {
+  if (mkfifo("/tmp/pingd/out", S_IFIFO | 0666) == -1) {
     if (errno != EEXIST) {
       perror("mkfifo");
       exit(-1);
     }
   }
+
 
   // set signals
   struct sigaction new_action, old_action;
@@ -277,12 +298,12 @@ int main(int argc, char **argv)
   running = true;
   std::thread listen_thread{ listen_task };
 
-  if ((in_pipefd = open("/tmp/pingd_in", O_RDONLY)) == -1) {
+  if ((in_pipefd = open("/tmp/pingd/in", O_RDONLY)) == -1) {
     perror("open()");
     return -1;
   }
 
-  if ((out_pipefd = open("/tmp/pingd_out", O_WRONLY)) == -1) {
+  if ((out_pipefd = open("/tmp/pingd/out", O_WRONLY)) == -1) {
     perror("open()");
     return -1;
   }
