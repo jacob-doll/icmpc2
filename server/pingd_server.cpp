@@ -48,7 +48,7 @@ static uint32_t next_connection_id = 1000;
 static connections_t active_connections;
 static std::mutex active_connections_mutex;
 
-static int out_pipefd, in_pipefd;
+static int in_pipefd, sockfd;
 
 static bool running = false;
 
@@ -79,11 +79,13 @@ void termination_handler(int signo)
 {
   std::puts("Killing process!");
   running = false;
+  close(sockfd);
+  close(in_pipefd);
+  std::exit(0);
 }
 
 void listen_task()
 {
-  int sockfd;
   uint8_t in[1024];
   sockaddr_in addr;
 
@@ -122,6 +124,8 @@ void listen_task()
       nbytes -= sizeof(id);
 
       std::memcpy(&id, &in[index], sizeof(id));
+
+      if (active_connections.find(id) == active_connections.end()) continue;
 
       auto &connection = active_connections.at(id);
       auto &in_buf = connection.in_buf;
@@ -217,11 +221,18 @@ void send_command(const std::string &idstr, const std::string &command)
     std::lock_guard<std::mutex> guard(active_connections_mutex);
 
     std::string filename = "/tmp/pingd/";
+    filename.append(connection.hostname);
+    filename.append("(");
     filename.append(idstr);
+    filename.append(")");
 
     if (connection.in_buf.data.size() > 0) {
       std::ofstream outfile(filename, std::ios::out | std::ios::binary | std::ios::app);
+      outfile << command << "\n";
+      outfile << "----------------------------------------\n";
       outfile.write((char *)connection.in_buf.data.data(), connection.in_buf.data.size());
+      outfile << "----------------------------------------\n";
+      outfile.close();
     }
 
     connection.in_buf.ready = false;
@@ -233,9 +244,14 @@ void refresh()
 {
   std::lock_guard<std::mutex> guard(active_connections_mutex);
 
-  size_t count = active_connections.size();
-  if (write(out_pipefd, &count, sizeof(count)) == -1) {
-    perror("write()");
+  // size_t count = active_connections.size();
+  // if (write(out_pipefd, &count, sizeof(count)) == -1) {
+  //   perror("write()");
+  // }
+
+  std::ofstream connections("/tmp/pingd/connections");
+  if (!connections.is_open()) {
+    std::fputs("Couldn't open file!", stderr);
   }
 
   for (auto it = active_connections.begin();
@@ -245,10 +261,14 @@ void refresh()
     std::string out{ it->second.hostname };
     out.append("(").append(std::to_string(it->first)).append(")");
 
-    if (write(out_pipefd, out.c_str(), out.size()) == -1) {
-      perror("write()");
-    }
+    connections << out << "\n";
+
+    // if (write(out_pipefd, out.c_str(), out.size()) == -1) {
+    //   perror("write()");
+    // }
   }
+
+  connections.close();
 }
 
 int main(int argc, char **argv)
@@ -303,11 +323,6 @@ int main(int argc, char **argv)
     return -1;
   }
 
-  if ((out_pipefd = open("/tmp/pingd/out", O_WRONLY)) == -1) {
-    perror("open()");
-    return -1;
-  }
-
   while (running) {
     uint8_t buf[1024];
     size_t nbytes;
@@ -320,8 +335,9 @@ int main(int argc, char **argv)
     }
 
     std::string in_str{ (char *)buf, nbytes };
+    std::puts(in_str.c_str());
 
-    if (in_str == "refresh") {
+    if (in_str == "refresh\n") {
       refresh();
       continue;
     }
@@ -340,7 +356,6 @@ int main(int argc, char **argv)
   }
 
   close(in_pipefd);
-  close(out_pipefd);
 
   return 0;
 }
