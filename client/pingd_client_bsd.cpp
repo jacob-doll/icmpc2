@@ -145,51 +145,56 @@ int main(int argc, char **argv)
   uint8_t in[1024];
   uint8_t flush = 0x00;
 
+  bool send_ping = true;
+  icmphdr *icmp;
+
   while (1) {
     std::memset(out, 0, sizeof(out));
     std::memset(in, 0, sizeof(in));
 
-    icmphdr *icmp = (icmphdr *)out;
-    icmp->icmp_type = ICMP_ECHO;
+    if (send_ping) {
+      icmp = (icmphdr *)out;
+      icmp->icmp_type = ICMP_ECHO;
 
-    size_t packet_size = sizeof(icmphdr) + 4;
+      size_t packet_size = sizeof(icmphdr) + 4;
 
-    if (id) {
-      std::memcpy(&out[packet_size], &id, sizeof(id));
-      packet_size += sizeof(id);
-      packet_size += sizeof(flush);
+      if (id) {
+        std::memcpy(&out[packet_size], &id, sizeof(id));
+        packet_size += sizeof(id);
+        packet_size += sizeof(flush);
 
-      if (flush == 0x01) {
-        flush = 0x00;
-      }
-
-      if (out_buf.ready && out_buf.pos < out_buf.data.size()) {
-        std::lock_guard<std::mutex> guard(buffer_mutex);
-        size_t to_write = (out_buf.data.size() - out_buf.pos) > 64 ? 64 : (out_buf.data.size() - out_buf.pos);
-        std::memcpy(&out[packet_size], out_buf.data.data() + out_buf.pos, to_write);
-        out_buf.pos += to_write;
-        packet_size += to_write;
-        flush = 0x00;
-        if (out_buf.pos >= out_buf.data.size()) {
-          std::puts("Flushing data to server!");
-          out_buf.data.clear();
-          out_buf.pos = 0;
-          out_buf.ready = false;
-          flush = 0x01;
+        if (flush == 0x01) {
+          flush = 0x00;
         }
-      } else {
-        std::memcpy(&out[packet_size], beacon_msg.c_str(), beacon_msg.size());
-        packet_size += beacon_msg.size();
-        flush = 0x02;
+
+        if (out_buf.ready && out_buf.pos < out_buf.data.size()) {
+          std::lock_guard<std::mutex> guard(buffer_mutex);
+          size_t to_write = (out_buf.data.size() - out_buf.pos) > 64 ? 64 : (out_buf.data.size() - out_buf.pos);
+          std::memcpy(&out[packet_size], out_buf.data.data() + out_buf.pos, to_write);
+          out_buf.pos += to_write;
+          packet_size += to_write;
+          flush = 0x00;
+          if (out_buf.pos >= out_buf.data.size()) {
+            std::puts("Flushing data to server!");
+            out_buf.data.clear();
+            out_buf.pos = 0;
+            out_buf.ready = false;
+            flush = 0x01;
+          }
+        } else {
+          std::memcpy(&out[packet_size], beacon_msg.c_str(), beacon_msg.size());
+          packet_size += beacon_msg.size();
+          flush = 0x02;
+        }
+
+        std::memcpy(&out[sizeof(icmphdr) + 4 + sizeof(id)], &flush, sizeof(flush));
       }
 
-      std::memcpy(&out[sizeof(icmphdr) + 4 + sizeof(id)], &flush, sizeof(flush));
-    }
-
-    icmp->icmp_cksum = checksum((uint16_t *)icmp, packet_size);
-    if (sendto(sockfd, icmp, packet_size, 0, (sockaddr *)&addr, sizeof(addr)) == -1) {
-      perror("sendto");
-      std::exit(-1);
+      icmp->icmp_cksum = checksum((uint16_t *)icmp, packet_size);
+      if (sendto(sockfd, icmp, packet_size, 0, (sockaddr *)&addr, sizeof(addr)) == -1) {
+        perror("sendto");
+        std::exit(-1);
+      }
     }
 
     size_t nbytes = read(sockfd, in, sizeof(in));
@@ -197,7 +202,12 @@ int main(int argc, char **argv)
     nbytes -= sizeof(ip);
 
     ip *ip_ = (ip *)in;
-    if (ip_->ip_src.s_addr != addr.sin_addr.s_addr) continue;
+    if (ip_->ip_src.s_addr != addr.sin_addr.s_addr) {
+      send_ping = false;
+      continue;
+    } else {
+      send_ping = true;
+    }
 
     if (nbytes <= sizeof(icmphdr) + 4) continue;
     nbytes -= sizeof(icmphdr);

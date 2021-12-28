@@ -8,6 +8,7 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <algorithm>
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -242,6 +243,7 @@ void send_command(const std::string &idstr, const std::string &command)
 
 void refresh()
 {
+  std::puts("Refreshing connections!");
   std::lock_guard<std::mutex> guard(active_connections_mutex);
 
   std::ofstream connections("/tmp/pingd/connections");
@@ -266,7 +268,7 @@ int main(int argc, char **argv)
 {
   // make pipe
   umask(0);
-  if (mkdir("/tmp/pingd", 0777) == -1) {
+  if (mkdir("/tmp/pingd/", 0777) == -1) {
     if (errno != EEXIST) {
       perror("mkdir");
       exit(-1);
@@ -317,9 +319,9 @@ int main(int argc, char **argv)
     }
 
     std::string in_str{ (char *)buf, nbytes };
-    std::puts(in_str.c_str());
+    in_str.erase(std::remove(in_str.begin(), in_str.end(), '\n'), in_str.end());
 
-    if (in_str == "refresh\n") {
+    if (in_str == "refresh") {
       refresh();
       continue;
     }
