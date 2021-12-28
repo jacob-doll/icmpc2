@@ -48,7 +48,7 @@ static uint32_t next_connection_id = 1000;
 static connections_t active_connections;
 static std::mutex active_connections_mutex;
 
-static int in_pipefd, sockfd;
+static int pipefd, sockfd;
 
 static bool running = false;
 
@@ -80,7 +80,7 @@ void termination_handler(int signo)
   std::puts("Killing process!");
   running = false;
   close(sockfd);
-  close(in_pipefd);
+  close(pipefd);
   std::exit(0);
 }
 
@@ -244,11 +244,6 @@ void refresh()
 {
   std::lock_guard<std::mutex> guard(active_connections_mutex);
 
-  // size_t count = active_connections.size();
-  // if (write(out_pipefd, &count, sizeof(count)) == -1) {
-  //   perror("write()");
-  // }
-
   std::ofstream connections("/tmp/pingd/connections");
   if (!connections.is_open()) {
     std::fputs("Couldn't open file!", stderr);
@@ -262,10 +257,6 @@ void refresh()
     out.append("(").append(std::to_string(it->first)).append(")");
 
     connections << out << "\n";
-
-    // if (write(out_pipefd, out.c_str(), out.size()) == -1) {
-    //   perror("write()");
-    // }
   }
 
   connections.close();
@@ -273,8 +264,7 @@ void refresh()
 
 int main(int argc, char **argv)
 {
-
-  // make pipes
+  // make pipe
   umask(0);
   if (mkdir("/tmp/pingd", 0777) == -1) {
     if (errno != EEXIST) {
@@ -283,20 +273,12 @@ int main(int argc, char **argv)
     }
   }
 
-  if (mkfifo("/tmp/pingd/in", S_IFIFO | 0666) == -1) {
+  if (mkfifo("/tmp/pingd/pipe", S_IFIFO | 0666) == -1) {
     if (errno != EEXIST) {
       perror("mkfifo");
       exit(-1);
     }
   }
-
-  if (mkfifo("/tmp/pingd/out", S_IFIFO | 0666) == -1) {
-    if (errno != EEXIST) {
-      perror("mkfifo");
-      exit(-1);
-    }
-  }
-
 
   // set signals
   struct sigaction new_action, old_action;
@@ -318,7 +300,7 @@ int main(int argc, char **argv)
   running = true;
   std::thread listen_thread{ listen_task };
 
-  if ((in_pipefd = open("/tmp/pingd/in", O_RDONLY)) == -1) {
+  if ((pipefd = open("/tmp/pingd/pipe", O_RDONLY)) == -1) {
     perror("open()");
     return -1;
   }
@@ -326,7 +308,7 @@ int main(int argc, char **argv)
   while (running) {
     uint8_t buf[1024];
     size_t nbytes;
-    if ((nbytes = read(in_pipefd, buf, 1024)) == -1) {
+    if ((nbytes = read(pipefd, buf, 1024)) == -1) {
       perror("read()");
     }
 
@@ -355,7 +337,7 @@ int main(int argc, char **argv)
     }
   }
 
-  close(in_pipefd);
+  close(pipefd);
 
   return 0;
 }
