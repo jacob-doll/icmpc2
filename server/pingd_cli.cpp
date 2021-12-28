@@ -95,40 +95,28 @@ void cmd_help(const std::string &input)
 
 void cmd_list(const std::string &)
 {
-  int in_pipefd, out_pipefd;
-  if ((in_pipefd = open("/tmp/pingd/in", O_WRONLY)) == -1) {
+  int pipefd;
+  if ((pipefd = open("/tmp/pingd/pipe", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
 
-  if ((out_pipefd = open("/tmp/pingd/out", O_RDONLY)) == -1) {
-    perror("open()");
-    return;
-  }
-
-  if (write(in_pipefd, "refresh", 7) == -1) {
+  if (write(pipefd, "refresh", 7) == -1) {
     perror("write()");
   }
 
-  char in[1024];
-  size_t count;
-  size_t nbytes;
-
-  if ((nbytes = read(out_pipefd, &count, sizeof(count))) == -1) {
-    perror("read()");
+  std::ifstream connections("/tmp/pingd/connections");
+  if (!connections.is_open()) {
+    std::fputs("Couldn't open file!", stderr);
   }
 
-  while (count > 0) {
-    if ((nbytes = read(out_pipefd, in, sizeof(in))) == -1) {
-      perror("read()");
-    }
-    const std::string in_str{ in, nbytes };
-    active_connections.insert(in_str);
-    count--;
+  std::string connection;
+  while (std::getline(connections, connection)) {
+    active_connections.insert(connection);
   }
 
-  close(in_pipefd);
-  close(out_pipefd);
+  connections.close();
+  close(pipefd);
 
   std::puts("Listing active machines!");
   std::cout << active_connections;
@@ -245,7 +233,7 @@ void cmd_run(const std::string &input)
   }
 
   int pipefd;
-  if ((pipefd = open("/tmp/pingd/in", O_WRONLY)) == -1) {
+  if ((pipefd = open("/tmp/pingd/pipe", O_WRONLY)) == -1) {
     perror("open()");
     return;
   }
