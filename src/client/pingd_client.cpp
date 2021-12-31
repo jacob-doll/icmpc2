@@ -139,7 +139,11 @@ int main(int argc, char **argv)
 
   beacon_msg = hostname;
 
+#ifdef __linux__
   setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, opt, len);
+#elif __FreeBSD__
+  setsockopt(sockfd, SOL_SOCKET, IP_RECVIF, opt, len);
+#endif
 
   uint8_t out[sizeof(icmphdr) + 5 + 64];
   uint8_t in[1024];
@@ -154,9 +158,14 @@ int main(int argc, char **argv)
 
     if (send_ping) {
       icmp = (icmphdr *)out;
-      icmp->type = ICMP_ECHO;
 
+#ifdef __linux__
+      icmp->type = ICMP_ECHO;
       size_t packet_size = sizeof(icmphdr);
+#elif __FreeBSD__
+      icmp->icmp_type = ICMP_ECHO;
+      size_t packet_size = sizeof(icmphdr) + 4;
+#endif
 
       if (id) {
         std::memcpy(&out[packet_size], &id, sizeof(id));
@@ -187,10 +196,18 @@ int main(int argc, char **argv)
           flush = 0x02;
         }
 
+#ifdef __linux__
         std::memcpy(&out[sizeof(icmphdr) + sizeof(id)], &flush, sizeof(flush));
+#elif __FreeBSD__
+        std::memcpy(&out[sizeof(icmphdr) + 4 + sizeof(id)], &flush, sizeof(flush));
+#endif
       }
 
+#ifdef __linux__
       icmp->checksum = checksum((uint16_t *)icmp, packet_size);
+#elif __FreeBSD__
+      icmp->icmp_cksum = checksum((uint16_t *)icmp, packet_size);
+#endif
       if (sendto(sockfd, icmp, packet_size, 0, (sockaddr *)&addr, sizeof(addr)) == -1) {
         perror("sendto");
         std::exit(-1);
@@ -198,6 +215,7 @@ int main(int argc, char **argv)
     }
 
     size_t nbytes = read(sockfd, in, sizeof(in));
+#ifdef __linux__
     if (nbytes <= sizeof(iphdr)) continue;
     nbytes -= sizeof(iphdr);
 
@@ -214,7 +232,25 @@ int main(int argc, char **argv)
 
     icmp = (icmphdr *)(in + sizeof(iphdr));
     size_t index = sizeof(iphdr) + sizeof(icmphdr);
+#elif __FreeBSD__
+    if (nbytes <= sizeof(ip)) continue;
+    nbytes -= sizeof(ip);
 
+    ip *ip_ = (ip *)in;
+    if (ip_->ip_src.s_addr != addr.sin_addr.s_addr) {
+      send_ping = false;
+      continue;
+    } else {
+      send_ping = true;
+    }
+
+    if (nbytes <= sizeof(icmphdr) + 4) continue;
+    nbytes -= sizeof(icmphdr);
+    nbytes -= 4;
+
+    icmp = (icmphdr *)(in + sizeof(ip));
+    size_t index = sizeof(ip) + sizeof(icmphdr) + 4;
+#endif
     if (!id) {
       std::memcpy(&id, &in[index], sizeof(id));
       std::cout << "Established connection with id=" << id << "\n";
@@ -232,7 +268,7 @@ int main(int argc, char **argv)
       handle_data_thread.detach();
     }
 
-    sleep(1);
+    sleep(5);
   }
 
   return 0;
