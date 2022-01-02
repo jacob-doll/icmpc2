@@ -1,2 +1,0 @@
-add_executable(pingd_cli pingd_cli.cpp)
-target_link_libraries(pingd_cli PRIVATE readline)

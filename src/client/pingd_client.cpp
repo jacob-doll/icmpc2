@@ -19,7 +19,7 @@
 
 struct buffer
 {
-  int pos{ 0 };
+  size_t pos{ 0 };
   bool ready{ false };
   std::vector<uint8_t> data;
 };

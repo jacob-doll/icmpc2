@@ -23,7 +23,7 @@
 
 struct buffer
 {
-  int pos{ 0 };
+  size_t pos{ 0 };
   bool ready{ false };
   std::vector<uint8_t> data;
 };
@@ -76,7 +76,7 @@ static uint16_t checksum(uint16_t *ptr, int nbytes)
   return rs;
 }
 
-void termination_handler(int signo)
+void termination_handler(int)
 {
   std::puts("Killing process!");
   running = false;
@@ -264,7 +264,7 @@ void refresh()
   connections.close();
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
   // make pipe
   umask(0);
@@ -309,7 +309,7 @@ int main(int argc, char **argv)
 
   while (running) {
     uint8_t buf[1024];
-    size_t nbytes;
+    ssize_t nbytes;
     if ((nbytes = read(pipefd, buf, 1024)) == -1) {
       perror("read()");
     }
@@ -318,7 +318,7 @@ int main(int argc, char **argv)
       continue;
     }
 
-    std::string in_str{ (char *)buf, nbytes };
+    std::string in_str{ (char *)buf, static_cast<size_t>(nbytes) };
     in_str.erase(std::remove(in_str.begin(), in_str.end(), '\n'), in_str.end());
 
     if (in_str == "refresh") {

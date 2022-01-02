@@ -85,7 +85,7 @@ std::ostream &operator<<(std::ostream &os, const std::set<std::string> &mapping)
   return os;
 }
 
-void cmd_help(const std::string &input)
+void cmd_help(const std::string &)
 {
   auto it = commands.begin();
   for (; it != commands.end(); it++) {
@@ -225,7 +225,7 @@ void cmd_run(const std::string &input)
   }
 
   std::string command;
-  for (int i = 1; i < input_arr.size(); i++) {
+  for (size_t i = 1; i < input_arr.size(); i++) {
     command.append(input_arr.at(i));
     if (i != input_arr.size() - 1) {
       command.append(" ");
@@ -474,12 +474,12 @@ char *command_generator(const char *text, int state)
   }
 }
 
-char **command_completion(const char *text, int start, int end)
+char **command_completion(const char *text, int, int)
 {
   return rl_completion_matches(text, command_generator);
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
   cmd_help("help");
 
