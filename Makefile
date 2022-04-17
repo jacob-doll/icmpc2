@@ -30,3 +30,5 @@ $(BUILD_DIR)/pingd_cli: $(INTERFACE_DIR)/pingd_cli.cpp
 $(BUILD_DIR)/pingd_server: $(SERVER_DIR)/pingd_server.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXX_FLAGS) -pthread -o $(BUILD_DIR)/pingd_server $(SERVER_DIR)/pingd_server.cpp 
+
+# clang++ -lIphlpapi -lws2_32 -o .\build\pingd_client_win.exe .\src\client\pingd_client_win.cpp
