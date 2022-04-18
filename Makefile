@@ -15,13 +15,13 @@ all: $(BUILD_DIR)/pingd_client_linux\
 clean:
 	rm -rf $(BUILD_DIR)
 
-$(BUILD_DIR)/pingd_client_linux: $(CLIENT_DIR)/pingd_client.cpp
+$(BUILD_DIR)/pingd_client_linux: $(CLIENT_DIR)/pingd_client_nix.cpp
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXX_FLAGS) -pthread -o $(BUILD_DIR)/pingd_client_linux $(CLIENT_DIR)/pingd_client.cpp
+	$(CXX) $(CXX_FLAGS) -pthread -o $(BUILD_DIR)/pingd_client_linux $(CLIENT_DIR)/pingd_client_nix.cpp
 
-$(BUILD_DIR)/pingd_client_bsd: $(CLIENT_DIR)/pingd_client.cpp
+$(BUILD_DIR)/pingd_client_bsd: $(CLIENT_DIR)/pingd_client_nix.cpp
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXX_FLAGS) -target x86_64-unknown-freebsd12.2 --sysroot=/opt/cross-freebsd-12/ -pthread -o $(BUILD_DIR)/pingd_client_bsd $(CLIENT_DIR)/pingd_client.cpp
+	$(CXX) $(CXX_FLAGS) -target x86_64-unknown-freebsd12.2 --sysroot=/opt/cross-freebsd-12/ -pthread -o $(BUILD_DIR)/pingd_client_bsd $(CLIENT_DIR)/pingd_client_nix.cpp
 
 $(BUILD_DIR)/pingd_cli: $(INTERFACE_DIR)/pingd_cli.cpp
 	@mkdir -p $(BUILD_DIR)
