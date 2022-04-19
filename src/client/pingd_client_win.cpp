@@ -164,8 +164,8 @@ void encode_data(uint32_t key, uint8_t *data, uint32_t size) {
     for (uint32_t i = 0; i < size; i++) {
         if (index < 0) index = 3;
         uint8_t val = data[i];
-        uint8_t e = (key >> (8 * index)) & 0xFF;
-        data[i] = val ^ e;
+        uint8_t key_byte = (key >> (8 * index)) & 0xFF;
+        data[i] = val ^ key_byte;
         index--;
     }
 }

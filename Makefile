@@ -32,3 +32,4 @@ $(BUILD_DIR)/pingd_server: $(SERVER_DIR)/pingd_server.cpp
 	$(CXX) $(CXX_FLAGS) -pthread -o $(BUILD_DIR)/pingd_server $(SERVER_DIR)/pingd_server.cpp 
 
 # clang++ -lIphlpapi -lws2_32 -lAdvapi32 -o .\build\pingd_client_win.exe .\src\client\pingd_client_win.cpp
+# clang++ -o .\build\pingd_client_win.exe .\src\client\pingd_client_win.cpp "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.18362.0\um\x64\iphlpapi.lib" "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.18362.0\um\x64\ws2_32.lib" "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.18362.0\um\x64\advapi32.lib"
